@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>ノベルメモ</title>
+  <meta name="description" content="小説のネタ出し・キャラクターシート作成のための軽量アウトライナー">
+  <meta name="theme-color" content="#f7f6f2">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ノベルメモ">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="appbar">
+    <button type="button" id="btn-back" class="icon-btn mobile-only" aria-label="戻る" hidden></button>
+    <h1 id="app-title">ノベルメモ</h1>
+    <div class="spacer"></div>
+    <button type="button" id="btn-undo" class="icon-btn" aria-label="元に戻す" title="元に戻す"></button>
+    <button type="button" id="btn-redo" class="icon-btn" aria-label="やり直す" title="やり直す"></button>
+    <button type="button" id="btn-search" class="icon-btn" aria-label="検索" title="検索"></button>
+    <button type="button" id="btn-view" class="icon-btn" aria-label="閲覧モード" title="閲覧モード"></button>
+    <button type="button" id="btn-sync" class="sync-btn" data-status="local"><span class="dot"></span><span class="label">ローカル</span></button>
+    <button type="button" id="btn-menu" class="icon-btn" aria-label="メニュー" title="メニュー" aria-haspopup="menu"></button>
+  </header>
+  <div id="update-banner" hidden>
+    <span>更新があります</span>
+    <button type="button" class="btn small" id="btn-reload">再読み込み</button>
+  </div>
+
+  <main id="main" data-screen="tree">
+    <section id="pane-tree" aria-label="ツリー">
+      <div id="filterbar"></div>
+      <div id="tree" role="tree" tabindex="0" aria-label="ノード一覧"></div>
+      <div id="tree-toolbar" class="toolbar"></div>
+    </section>
+    <section id="pane-search" aria-label="検索" hidden></section>
+    <section id="pane-editor" aria-label="編集"></section>
+  </main>
+
+  <aside id="sidenote-panel" aria-label="サイドメモ" hidden></aside>
+  <div id="viewer" hidden></div>
+  <div id="menu" class="popup-menu" role="menu" hidden></div>
+  <div id="modal-root"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>このアプリを使うには JavaScript を有効にしてください。</noscript>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
