@@ -1,7 +1,7 @@
 // Service Worker: アプリ本体をキャッシュしてオフラインでも起動できるようにする
 // アプリを更新したら VERSION を上げること（新バージョン検出→「更新があります」表示）
 const VERSION = 'v1.0.0';
-const CACHE = `novelmemo-${VERSION}`;
+const CACHE = `netaterry-${VERSION}`;
 const ASSETS = [
   './',
   './index.html',
@@ -41,7 +41,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.startsWith('novelmemo-') && k !== CACHE).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k.startsWith('netaterry-') && k !== CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });

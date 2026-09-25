@@ -1,6 +1,6 @@
 {
-  "name": "ノベルメモ",
-  "short_name": "ノベルメモ",
+  "name": "Netaterry",
+  "short_name": "Netaterry",
   "description": "小説のネタ出し・キャラクターシート作成のための軽量アウトライナー",
   "lang": "ja",
   "start_url": "./",
