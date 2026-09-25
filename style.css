@@ -198,8 +198,20 @@ small { font-size: 12px; }
   background: var(--bg); border-left: 1px solid var(--line-strong); box-shadow: -8px 0 24px rgb(0 0 0 / .08);
   display: flex; flex-direction: column;
 }
-#sidenote-panel .sn-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
-#sidenote-panel .sn-head strong { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sidenote-panel .sn-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 0 8px; border-bottom: 1px solid var(--line); }
+.sn-tabs { flex: 1; display: flex; gap: 2px; min-width: 0; }
+.sn-tab {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; background: none;
+  padding: 8px 12px 9px; font-size: 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  white-space: nowrap;
+}
+.sn-tab:hover:not(:disabled) { color: var(--fg); }
+.sn-tab[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+.sn-tab:disabled { opacity: .45; cursor: default; }
+.sn-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.sn-tab .mark { width: 6px; height: 6px; border-radius: 50%; background: transparent; flex: none; }
+.sn-tab.has .mark { background: #d99a1e; }
+#sidenote-panel .sn-sub { font-size: 12px; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--panel); }
 #sidenote-panel textarea { flex: 1; border: 0; outline: none; resize: none; background: var(--panel); padding: 12px; font-size: 15px; line-height: 1.7; padding-bottom: calc(12px + var(--safe-b)); }
 @media (max-width: 799px) {
   #sidenote-panel { top: auto; height: 55%; width: 100%; border-left: 0; border-top: 1px solid var(--line-strong); border-radius: 12px 12px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .12); }
@@ -364,12 +376,58 @@ input[type="color"] { width: 44px; height: 28px; padding: 1px; }
 .v-doc.vertical .tcy { text-combine-upright: all; -webkit-text-combine: horizontal; }
 .v-scroll.vertical { overflow-x: auto; overflow-y: hidden; }
 
-/* ページめくり */
+/* ページめくり（横書き・縦書きとも段組みで1段＝1ページ） */
 .v-page-frame { position: absolute; overflow: hidden; }
-.v-page-frame .v-doc { max-width: none; margin: 0; }
-.v-page-frame .v-doc.horizontal { column-fill: auto; height: 100%; }
-.v-page-frame .v-doc.vertical { position: absolute; top: 0; right: 0; width: max-content; }
+.v-page-frame .v-doc { max-width: none; margin: 0; column-fill: auto; orphans: 1; widows: 1; }
 .v-doc .pb { break-before: column; -webkit-column-break-before: always; }
+
+/* ---- 本文の記法（どれも行送り --v-lh を変えない＝ページ分割が崩れない） ---- */
+.v-doc .md-h, .v-doc .md-hr, .v-doc .md-scene, .v-doc .md-quote, .v-doc .md-li, .v-doc .md-code {
+  margin: 0; line-height: var(--v-lh); white-space: pre-wrap; word-break: break-word;
+}
+.v-doc .md-h { font-weight: 700; }
+/* 見出しだけがページ末尾に取り残されないようにする */
+.v-doc .h, .v-doc .md-h { break-after: avoid; -webkit-column-break-after: avoid; }
+.v-doc .md-h[data-l="1"] { font-size: 1.25em; }
+.v-doc .md-h[data-l="2"] { font-size: 1.15em; }
+.v-doc .md-h[data-l="3"], .v-doc .md-h[data-l="4"], .v-doc .md-h[data-l="5"], .v-doc .md-h[data-l="6"] { font-size: 1.05em; }
+/* 区切り線: 1行分の高さの中央に線を引く（論理プロパティなので縦書きでは縦線になる） */
+.v-doc .md-hr { position: relative; block-size: var(--v-lh); }
+.v-doc .md-hr::before {
+  content: ""; position: absolute; inset-inline: 8%; inset-block-start: 50%;
+  border-block-start: 1px solid color-mix(in srgb, var(--v-fg) 35%, var(--v-bg));
+}
+/* 場面転換: 記号を行の中央に */
+.v-doc .md-scene { text-align: center; color: color-mix(in srgb, var(--v-fg) 70%, var(--v-bg)); letter-spacing: .1em; }
+/* 引用: 横書きは左の線、縦書きは字下げ（上に線を引くと不自然なため） */
+.v-doc .md-quote { color: color-mix(in srgb, var(--v-fg) 78%, var(--v-bg)); padding-inline-start: calc(var(--q, 1) * 1em); border-inline-start: 3px solid color-mix(in srgb, var(--v-fg) 18%, var(--v-bg)); }
+.v-doc.vertical .md-quote { border-inline-start: 0; padding-inline-start: calc(var(--q, 1) * 2em); }
+/* 箇条書き: ぶら下げインデント */
+.v-doc .md-li { padding-inline-start: calc(var(--li, 0) * 1.5em + 1.5em); text-indent: -1.5em; }
+.v-doc .md-li .mk { display: inline-block; inline-size: 1.5em; text-indent: 0; }
+.v-doc .md-li.ol .mk { font-feature-settings: "tnum"; }
+/* コード */
+.v-doc code, .v-doc .md-code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Osaka-Mono", "BIZ UDGothic", "MS Gothic", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", monospace; font-size: .88em; background: color-mix(in srgb, var(--v-fg) 7%, var(--v-bg)); }
+.v-doc code { padding-inline: .25em; border-radius: 3px; }
+.v-doc .md-code { padding-inline: .6em; }
+/* 太字・斜体・取り消し・リンク */
+.v-doc b { font-weight: 700; }
+.v-doc s { text-decoration-thickness: 1px; }
+.v-doc a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--v-fg) 45%, var(--v-bg)); text-underline-offset: .15em; }
+.v-doc.vertical em { font-style: normal; text-decoration: underline; text-underline-position: right; text-decoration-thickness: 1px; text-underline-offset: .25em; } /* 縦書きの斜体は傍線で表す */
+/* ルビ */
+.v-doc ruby { ruby-align: center; }
+.v-doc rt { font-size: .5em; line-height: 1; font-weight: normal; }
+/* 傍点: 横書きは「•」、縦書きは「﹅」（CSS の text-emphasis の標準と同じ）。
+   文字ごとに印を行間へ重ねて描く（CSS の text-emphasis は行送りを広げてしまうため使わない） */
+.v-doc .bt .bc { position: relative; }
+.v-doc .bt .bc::after {
+  content: "•"; position: absolute; inset-inline: 0; inset-block-start: -1em;
+  font-size: .5em; line-height: 1; text-align: center; font-weight: normal; pointer-events: none;
+}
+.v-doc.vertical .bt .bc::after { content: "﹅"; }
+/* ルビが付いた文字の傍点はルビと反対側に出す */
+.v-doc .bt ruby .bc::after { inset-block-start: auto; inset-block-end: -1em; }
 .v-tap { position: absolute; top: 0; bottom: 0; z-index: 2; }
 .v-tap.l { left: 0; width: 30%; }
 .v-tap.c { left: 30%; width: 40%; }
