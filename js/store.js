@@ -501,17 +501,53 @@ function seedSample(s) {
   const t = now();
   const mk = (id, parentId, order, title, body, tags = [], sideNote = '') =>
     s.nodes.set(id, normalizeNode({ id, parentId, order, title, body, tags, sideNote, updatedAt: t }));
-  const a = uuid(), b = uuid(), c = uuid(), d = uuid(), e = uuid(), f = uuid();
-  mk(a, null, 1, 'はじめに', 'ノベルメモへようこそ。\nノードを選んで右側で本文を書きます。\n**太字**はビューモードで太字表示されます。\n\n左のツリーで「＋」から兄弟ノード、「↳」から子ノードを追加できます。', ['使い方']);
-  mk(b, null, 2, '世界観', '大陸の北半分を占める王国が舞台。', ['設定']);
-  mk(c, b, 1, '王都', '城壁に囲まれた古都。\n人口は12万人ほど。', ['設定/地名'], '人口はあとで決める');
-  mk(d, null, 3, 'キャラクター', '', ['キャラ']);
-  mk(e, d, 1, 'リオ', '名前：リオ\n年齢：17\n役割：主人公\n性格：\n外見：\n口調：\n', ['キャラ/主人公']);
-  mk(f, null, 4, 'プロット', '発端：\n展開：\n転換：\n結末：', ['プロット']);
-  const tt = (name, body, tags) => { const id = uuid(); s.templates.set(id, normalizeTemplate({ id, name, body, tags, updatedAt: t })); };
+  const id = () => uuid();
+
+  const root = id();
+  mk(root, null, 1, 'Netaterryの使い方', 'このツリーは操作を試しながら読める説明です。不要になったら削除してかまいません（左のツリーで選び、下のごみ箱アイコンでゴミ箱へ移動します）。', ['使い方']);
+
+  const basic = id();
+  mk(basic, root, 1, '基本の操作', 'ここが「ノード」です。左のツリーで選ぶと、右側にタイトル・タグ・本文が表示されます。');
+  const n1 = id();
+  mk(n1, basic, 1, 'ノードの追加', '下のツールバーの＋で「下に兄弟ノードを追加」、↳で「子ノードを追加」します。\nPCではキーボードでも操作できます：\n・Ctrl+Enter（Macは⌘+Enter）で兄弟追加\n・Tab / Shift+Tab で階層を下げる・上げる\n・↑↓ で並べ替え、←→ でツリーの開閉');
+  const n2 = id();
+  mk(n2, basic, 2, '移動・複製・削除', '↑↓で並べ替え、⇤⇥で階層の上げ下げができます。\nPCではドラッグ＆ドロップでも移動できます。\n複製ボタンで、このノードと子ノードをまとめてコピーできます。\n削除するとゴミ箱に移動します（メニューの「ゴミ箱」から復元・完全削除）。');
+  const n3 = id();
+  mk(n3, basic, 3, 'サイドメモ', '本文とは別に、作業用のメモを持たせられます。\nツールバーのメモアイコンから開いてみてください。閲覧モードには表示されません。', [], 'これがサイドメモです。設定の裏話や、まだ決まっていないことのメモなどに使えます。');
+
+  const tagNode = id();
+  mk(tagNode, root, 2, 'タグ', 'タグは自由なテキストです。決まったノードの種類はなく、タグで分類します。\n入力欄にタグ名を書いて Enter（または「,」「、」）で確定します。\n\n「キャラ/主人公」のように「/」で区切ると階層タグになり、「キャラ」で絞り込むと配下もまとめて表示されます。', ['使い方/タグ']);
+  const tagEx = id();
+  mk(tagEx, tagNode, 1, 'タグの例', 'このノードには「キャラ/主人公」というタグが付いています。\n左上の「タグで絞り込む」から「キャラ」を選ぶと、このノードが表示されます。', ['キャラ/主人公']);
+
+  const search = id();
+  mk(search, root, 3, '検索', '上部の検索アイコン（またはCtrl+F / ⌘+F）で検索できます。\n\n・語を空白で区切るとAND検索：王都 騎士\n・-語 で除外：騎士 -団長\n・"語 句" で空白を含む語句そのまま\n・tag:タグ名 でタグ絞り込み\n・in:title / in:body / in:note で検索範囲を限定\n\n検索結果からノードへジャンプでき、一致箇所の一括置換もできます。', ['使い方']);
+
+  const tpl = id();
+  mk(tpl, root, 4, 'テンプレート', 'メニューの「テンプレート管理」で定型文を登録できます。\n本文に {{変数名}} と書いておくと、呼び出し時に入力欄が出ます。\nためしにキャラクターシートのテンプレートを呼び出してみてください（ツールバーのテンプレートアイコン）。', ['使い方']);
+
+  const view = id();
+  mk(view, root, 5, '閲覧モード（ビューモード）', '上部の本のアイコンから、読み物としての見た目で表示できます。\n**太字**のような簡単な装飾に対応しています。\n\n設定から縦書き・ページめくり表示に切り替えられます。長い文章を書いたら試してみてください。', ['使い方']);
+
+  const sync = id();
+  mk(sync, root, 6, 'データの保存・同期', 'このデータはこの端末（ブラウザ）の中に自動で保存されます。\n\n右上のボタンからGoogleにログインすると、複数の端末でデータを同期できます（あらかじめ config.js の設定が必要です。README を参照）。\n\nメニューの「バックアップを保存」で、データ全体をJSONファイルとして書き出せます。定期的な保存をおすすめします。', ['使い方']);
+
+  const sample = id();
+  mk(sample, null, 2, '（サンプル）世界観', 'ここから下は、実際に書き始めるときの参考用サンプルです。自由に書き換えてください。', ['設定']);
+  const town = id();
+  mk(town, sample, 1, '王都', '城壁に囲まれた古都。\n人口は12万人ほど。', ['設定/地名'], '人口はあとで決める');
+  const chara = id();
+  mk(chara, null, 3, '（サンプル）キャラクター', '', ['キャラ']);
+  const hero = id();
+  mk(hero, chara, 1, 'リオ', '名前：リオ\n年齢：17\n役割：主人公\n性格：\n外見：\n口調：\n', ['キャラ/主人公']);
+  const plot = id();
+  mk(plot, null, 4, '（サンプル）プロット', '発端：\n展開：\n転換：\n結末：', ['プロット']);
+
+  const tt = (name, body, tags) => { const tid = uuid(); s.templates.set(tid, normalizeTemplate({ id: tid, name, body, tags, updatedAt: t })); };
   tt('キャラクターシート', '名前：{{名前}}\n年齢：{{年齢}}\n役割：\n性格：\n外見：\n口調：\n{{名前}}の目的：\n', ['キャラ']);
   tt('プロット（起承転結）', '発端：\n展開：\n転換：\n結末：\n', ['プロット']);
-  [...s.nodes.keys()].forEach((id) => s._pending.nodes.add(id));
-  [...s.templates.keys()].forEach((id) => s._pending.templates.add(id));
+
+  [...s.nodes.keys()].forEach((nid) => s._pending.nodes.add(nid));
+  [...s.templates.keys()].forEach((tid) => s._pending.templates.add(tid));
   s.meta.dirty = false;
 }

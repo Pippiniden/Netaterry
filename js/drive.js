@@ -2,8 +2,8 @@
 import { CONFIG } from '../config.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const FILE_NAME = 'novelmemo.json';
-const TOKEN_KEY = 'novelmemo.token';
+const FILE_NAME = 'netaterry.json';
+const TOKEN_KEY = 'netaterry.token';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 

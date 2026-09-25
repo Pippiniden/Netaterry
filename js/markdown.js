@@ -66,7 +66,7 @@ function escapeNoteArrow(s) { return s.replace(/--(\\*)>/g, '--\\$1>'); }
 function unescapeNoteArrow(s) { return s.replace(/--\\(\\*)>/g, '--$1>'); }
 
 export function exportRoundtrip(roots, tree, { exportedAt = new Date() } = {}) {
-  const out = [`<!-- novelmemo v1 exported="${exportedAt.toISOString().replace(/\.\d{3}Z$/, 'Z')}" -->`, ''];
+  const out = [`<!-- netaterry v1 exported="${exportedAt.toISOString().replace(/\.\d{3}Z$/, 'Z')}" -->`, ''];
   const walk = (n, depth) => {
     const title = String(n.title).replace(/[\r\n]+/g, ' ');
     out.push('#'.repeat(Math.min(depth, 6)) + ' ' + title);
@@ -102,7 +102,7 @@ export function parseMarkdown(src) {
   const text = normalizeNewlines(src);
   const lines = text.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
-  const roundtrip = /^<!-- novelmemo v\d+/.test(lines[0] || '');
+  const roundtrip = /^<!-- netaterry v\d+/.test(lines[0] || '');
   return roundtrip ? parseRoundtrip(lines) : parsePlain(lines);
 }
 

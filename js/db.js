@@ -1,7 +1,7 @@
 // IndexedDB ラッパー（ローカルファースト保存）
 // stores: nodes(keyPath id), templates(keyPath id), meta(key-value)
 
-const DB_NAME = 'novelmemo';
+const DB_NAME = 'netaterry';
 const DB_VERSION = 1;
 
 let dbPromise = null;
