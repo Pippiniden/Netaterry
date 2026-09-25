@@ -8,6 +8,7 @@ import { openTemplateManager } from './templates.js';
 import { openExport, downloadBackup, restoreBackup, importMarkdown } from './io.js';
 import { sync } from '../sync.js';
 import { auth } from '../drive.js';
+import { toggleSideNote } from './editor.js';
 
 // ---------- テーマ ----------
 export function applyTheme() {
@@ -61,6 +62,7 @@ export function toggleMenu(force) {
   const item = (ic, label, fn) => h('button', { type: 'button', role: 'menuitem', onclick: () => { menu.hidden = true; fn(); } }, h('span', { html: icon(ic, 18) }), label);
   const loggedIn = auth.hasToken;
   menu.append(
+    item('note', '共通メモ', () => toggleSideNote(true, 'global')),
     item('template', 'テンプレート管理', openTemplateManager),
     item('tag', 'タグ管理', openTagManager),
     item('trash', 'ゴミ箱', openTrash),
@@ -280,7 +282,7 @@ async function importSettings() {
   let data;
   try {
     data = JSON.parse(f.text);
-    if (data.kind !== 'netaterry-settings' || !data.settings) throw new Error('設定ファイルではありません');
+    if (!['netaterry-settings', 'novelmemo-settings'].includes(data.kind) || !data.settings) throw new Error('設定ファイルではありません');
   } catch (e) { toast('読み込めません：' + e.message); return; }
   const wrap = h('div', {},
     h('p', {}, '画面の幅に依存する項目（余白）を適用しますか？'),
@@ -313,10 +315,13 @@ export function openHelp() {
 <p>Enter または「,」「、」で確定。<code>キャラ/主人公</code> のように「/」で区切ると、<code>キャラ</code> で絞り込んだときにまとめて表示されます。</p>
 <h3>検索</h3>
 <p><code>語1 語2</code>（すべて含む）、<code>-語</code>（含まない）、<code>"語 句"</code>、<code>tag:タグ</code>、<code>in:title</code> / <code>in:body</code> / <code>in:note</code>。検索結果から一括置換もできます。</p>
+<h3>サイドメモ</h3>
+<p>本文とは別の作業用メモです。「このノード」タブは開いているノードだけのメモ、「共通」タブはどのノードからでも同じ内容が見られるメモです（メニューの「共通メモ」からも開けます）。どちらも閲覧モードには表示されません。</p>
 <h3>テンプレート</h3>
 <p>本文に <code>{{名前}}</code> のような変数を書いておくと、呼び出し時に入力欄が出ます。</p>
 <h3>閲覧モード</h3>
 <p>本の形で読み返せます。縦書き・ページめくりに対応。ページめくりでは画面の左右タップ・スワイプ・矢印キーでめくり、中央タップでメニューを表示します。</p>
+<p>本文の記法：<code>｜親文字《ルビ》</code>（漢字の直後なら <code>漢字《ルビ》</code>）、<code>《《傍点》》</code>、<code>---</code> 区切り線、<code>* * *</code> や <code>◇◇◇</code> 場面転換、<code>**太字**</code>、<code>*斜体*</code>、<code>~~取り消し~~</code>、<code>&#96;コード&#96;</code>、<code>[文字](URL)</code>、<code># 見出し</code>、<code>- 箇条書き</code>、<code>1. 番号</code>、<code>&gt; 引用</code>。記号をそのまま出したいときは前に <code>\</code> を付けます。編集画面では記法のまま表示されます。</p>
 <h3>データの保護</h3>
 <p>データはこの端末（ブラウザ）内に保存されます。iPhone/iPad では「ホーム画面に追加」して使うと、データが自動削除されにくくなります。定期的にメニューの「バックアップを保存」もおすすめします。</p>` }),
   });

@@ -1,6 +1,7 @@
 // ビューモード（閲覧）: 見出し自動生成・縦書き・ページめくり
 import { store } from '../store.js';
 import { escapeHtml, debounce } from '../util.js';
+import { renderBody, renderTitle } from '../richtext.js';
 import { h, $, icon, iconBtn } from './dom.js';
 
 const V = {
@@ -112,24 +113,16 @@ function gotoChapter(d) {
 }
 
 // ---------- 本文の生成 ----------
-function inline(text, vert) {
-  // **太字** のみ対応
-  const out = [];
-  let last = 0;
-  const re = /\*\*(.+?)\*\*/g;
-  let m;
-  const plain = (s) => (vert ? tcy(s) : escapeHtml(s));
-  while ((m = re.exec(text))) {
-    out.push(plain(text.slice(last, m.index)), '<b>', plain(m[1]), '</b>');
-    last = m.index + m[0].length;
-  }
-  out.push(plain(text.slice(last)));
-  return out.join('');
+// 本文の記法（ルビ・傍点・Markdown など）は richtext.js で変換する
+const inline = (text, vert) => renderTitle(text, { vertical: vert });
+/** 記法を外した読み用の文字列（上部バーのタイトル用。ルビは親文字だけ残す） */
+function plainTitle(text) {
+  const d = document.createElement('div');
+  d.innerHTML = renderTitle(text || '無題');
+  d.querySelectorAll('rt').forEach((r) => r.remove());
+  return d.textContent;
 }
-/** 縦中横: 2桁までの半角数字 */
-function tcy(s) {
-  return s.split(/((?<![0-9])[0-9]{1,2}(?![0-9]))/).map((p, i) => (i % 2 ? `<span class="tcy">${p}</span>` : escapeHtml(p))).join('');
-}
+const bodyHtml = (text, vert) => renderBody(text, { vertical: vert, key: () => keyCounter++ });
 
 let keyCounter = 0;
 function nodeHtml(n, depth, { lazy, pb }) {
@@ -141,7 +134,7 @@ function nodeHtml(n, depth, { lazy, pb }) {
   if (lazy && kids.length) s += `<button type="button" class="fold" data-fold="${n.id}">${closed ? `▸ 開く（${kids.length}）` : '▾ 閉じる'}</button>`;
   s += '</div>';
   if (store.settings.viewShowTags && n.tags.length) s += `<div class="vtags">${n.tags.map((t) => '#' + escapeHtml(t)).join('　')}</div>`;
-  if (n.body) for (const line of n.body.replace(/\s+$/, '').split('\n')) s += `<p data-k="${keyCounter++}">${inline(line, vert)}</p>`;
+  if (n.body) s += bodyHtml(n.body, vert);
   s += '</section>';
   if (!closed) kids.forEach((k) => { s += nodeHtml(k, depth + 1, { lazy, pb: false }); });
   return s;
@@ -166,7 +159,7 @@ function sectionOnly(n, depth) {
   const vert = vertical();
   let s = `<section class="node" style="--d:${depth}" data-id="${n.id}"><div class="h" data-d="${Math.min(depth, 6)}" data-k="${keyCounter++}">${inline(n.title || '無題', vert)}</div>`;
   if (store.settings.viewShowTags && n.tags.length) s += `<div class="vtags">${n.tags.map((t) => '#' + escapeHtml(t)).join('　')}</div>`;
-  if (n.body) for (const line of n.body.replace(/\s+$/, '').split('\n')) s += `<p data-k="${keyCounter++}">${inline(line, vert)}</p>`;
+  if (n.body) s += bodyHtml(n.body, vert);
   return s + '</section>';
 }
 function subtree(n, depth, pb) {
@@ -217,75 +210,53 @@ function render({ keepPos, anchor: given = null }) {
       sc.scrollLeft -= e.deltaY;
     }, { passive: false });
     stage.append(sc);
-    title.textContent = V.range === 'node' ? (cs[0].title || '無題') : '全体';
+    title.textContent = V.range === 'node' ? plainTitle(cs[0].title) : '全体';
     foot.textContent = '';
     V.layout = null;
     return;
   }
 
   // ページめくり
+  // 横書き・縦書きとも CSS 段組み（multicol）で1段＝1ページにする。
+  // ブラウザが行単位で段を分けるので、ルビ・傍点・見出しなどで行の高さが変わってもページ境界で行が切れない。
+  //   横書き: 段は右へ並ぶ（ページ送り＝左へずらす）
+  //   縦書き: 段は下へ並ぶ（ページ送り＝上へずらす）。1段の中は右から左へ流れる
   const W = stage.clientWidth, H = stage.clientHeight;
   const m = store.settings.viewTheme.margin;
   let fw = Math.max(120, W - m.left - m.right);
   const fh = Math.max(120, H - m.top - m.bottom);
   let left = m.left;
   if (vertical()) {
-    // ページ幅を行送りの整数倍に揃えて、ページ境界で行が切れないようにする
-    const cols = Math.max(1, Math.floor(fw / lh));
-    const nfw = cols * lh;
+    // 見た目を整えるため、ページ幅を行送りの整数倍にして中央に寄せる（崩れ防止は段組みが担う）
+    const nfw = Math.max(1, Math.floor(fw / lh)) * lh;
     left += Math.floor((fw - nfw) / 2);
     fw = nfw;
   }
   const frame = h('div', { class: 'v-page-frame', style: { left: left + 'px', top: m.top + 'px', width: fw + 'px', height: fh + 'px' } }, doc);
   stage.append(frame);
   const gap = 48;
-  if (vertical()) {
-    doc.style.height = fh + 'px';
-    insertVerticalBreaks(doc, fw);
-  } else {
-    doc.style.columnWidth = fw + 'px';
-    doc.style.columnGap = gap + 'px';
-    doc.style.width = fw + 'px';
-    doc.append(h('span', { class: 'v-end' }));
-  }
-  const stride = vertical() ? fw : fw + gap;
-  let total;
-  if (vertical()) total = Math.max(1, Math.ceil((doc.scrollWidth - 1) / fw));
-  else {
-    const end = doc.querySelector('.v-end').getBoundingClientRect();
-    const dr = doc.getBoundingClientRect();
-    total = Math.max(1, Math.floor((end.left - dr.left + 1) / stride) + 1);
-  }
+  doc.style.width = fw + 'px';
+  doc.style.height = fh + 'px';
+  doc.style.columnWidth = (vertical() ? fh : fw) + 'px'; // 段の幅は行の方向の長さ（縦書きなら高さ）
+  doc.style.columnGap = gap + 'px';
+  doc.append(h('span', { class: 'v-end' }));
+  const stride = (vertical() ? fh : fw) + gap;
+  const end = doc.querySelector('.v-end').getBoundingClientRect();
+  const dr = doc.getBoundingClientRect();
+  const along = vertical() ? end.top - dr.top : end.left - dr.left;
+  const total = Math.max(1, Math.floor((along + 1) / stride) + 1);
   V.layout = { doc, fw, fh, stride, total, vertical: vertical() };
   V.total = total;
   if (anchor != null) V.page = pageOfKey(anchor);
   V.page = Math.max(0, Math.min(V.page === Infinity ? total - 1 : V.page, total - 1));
-  title.textContent = cs[V.chapterIdx] ? (cs[V.chapterIdx].title || '無題') : '';
+  title.textContent = cs[V.chapterIdx] ? plainTitle(cs[V.chapterIdx].title) : '';
   applyPage();
-}
-
-/** 縦書き: 改ページ指定の節をページ境界まで送る */
-function insertVerticalBreaks(doc, fw) {
-  const pbs = doc.querySelectorAll('.pb');
-  for (const el of pbs) {
-    const dr = doc.getBoundingClientRect();
-    const er = el.getBoundingClientRect();
-    const off = Math.round(dr.right - er.right);
-    const rem = ((off % fw) + fw) % fw;
-    if (rem > 1) {
-      const sp = document.createElement('div');
-      sp.style.blockSize = (fw - rem) + 'px';
-      sp.style.inlineSize = '1px';
-      el.before(sp);
-    }
-  }
 }
 
 function applyPage() {
   const L = V.layout;
   if (!L) return;
-  const x = L.vertical ? V.page * L.stride : -V.page * L.stride;
-  L.doc.style.transform = `translateX(${x}px)`;
+  L.doc.style.transform = L.vertical ? `translateY(${-V.page * L.stride}px)` : `translateX(${-V.page * L.stride}px)`;
   const cs = chapters();
   V.els.foot.textContent = `${V.page + 1} / ${L.total}` + (V.range === 'all' && cs.length > 1 ? `　（章 ${V.chapterIdx + 1} / ${cs.length}）` : '');
 }
@@ -294,8 +265,7 @@ function pageOfEl(el) {
   const L = V.layout;
   const dr = L.doc.getBoundingClientRect();
   const er = el.getBoundingClientRect();
-  if (L.vertical) return Math.floor((dr.right - er.right + 1) / L.stride);
-  return Math.floor((er.left - dr.left + 1) / L.stride);
+  return Math.floor(((L.vertical ? er.top - dr.top : er.left - dr.left) + 1) / L.stride);
 }
 // ---- 位置の保持: 表示中の先頭文字（要素キー＋文字オフセット）を記録 ----
 function textNodes(el) {
@@ -323,8 +293,7 @@ function charRect(nodes, off) {
 function pageOfRect(rect) {
   const L = V.layout;
   const dr = L.doc.getBoundingClientRect();
-  if (L.vertical) return Math.floor((dr.right - rect.right + 1) / L.stride);
-  return Math.floor((rect.left - dr.left + 1) / L.stride);
+  return Math.floor(((L.vertical ? rect.top - dr.top : rect.left - dr.left) + 1) / L.stride);
 }
 function currentAnchor() {
   const L = V.layout;
@@ -384,6 +353,7 @@ function setupGestures(stage) {
     if (!active || !paged()) return;
     active = false;
     if (window.getSelection && String(window.getSelection()).length) return;
+    if (e.target.closest && e.target.closest('a')) return; // リンクのタップはページをめくらない
     const dx = e.clientX - sx, dy = e.clientY - sy;
     const vert = vertical();
     if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) && Date.now() - st < 800) {

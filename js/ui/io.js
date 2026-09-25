@@ -19,9 +19,11 @@ export async function restoreBackup() {
   const f = await pickFile('.json,application/json');
   if (!f) return;
   let data;
+  let hasGlobal = false; // 共通メモを含む（v2以降の）バックアップか
   try {
     const raw = JSON.parse(f.text);
-    if (raw && raw.kind === 'netaterry-settings') { toast('これは設定ファイルです。設定画面から読み込んでください。'); return; }
+    hasGlobal = !!(raw && raw.globalNote);
+    if (raw && /^(netaterry|novelmemo)-settings$/.test(raw.kind || '')) { toast('これは設定ファイルです。設定画面から読み込んでください。'); return; }
     data = migrate(raw);
   } catch (e) { await modal({ title: '読み込めません', body: h('p', {}, e.message) }); return; }
   const live = data.nodes.filter((n) => !n.deleted);
@@ -31,7 +33,7 @@ export async function restoreBackup() {
   if (orphans) warns.push(`存在しない親を指すノードが ${orphans} 件あります（最上位に表示されます）。`);
   const wrap = h('div', {},
     h('p', {}, `${f.name}`),
-    h('p', { class: 'muted' }, `ノード ${live.length}件（ゴミ箱 ${data.nodes.length - live.length}件）・テンプレート ${data.templates.filter((t) => !t.deleted).length}件`),
+    h('p', { class: 'muted' }, `ノード ${live.length}件（ゴミ箱 ${data.nodes.length - live.length}件）・テンプレート ${data.templates.filter((t) => !t.deleted).length}件${hasGlobal ? '・共通メモあり' : ''}`),
     warns.length ? h('div', { class: 'warn' }, h('ul', {}, warns.map((w) => h('li', {}, w)))) : null,
     h('h3', {}, '読み込み方法'),
     radioGroup('mode', [
@@ -53,6 +55,7 @@ export async function restoreBackup() {
         const cur = store.templates.get(t.id);
         if (!cur || cur.updatedAt !== t.updatedAt) { tx.touch('tpl', t.id); store.templates.set(t.id, t); }
       }
+      if (merged.globalNote.updatedAt !== store.globalNote.updatedAt) { tx.touch('global', 'global'); store.globalNote = merged.globalNote; }
     });
     store._childCache = null;
   } else {
@@ -65,6 +68,8 @@ export async function restoreBackup() {
       const keepT = new Set(data.templates.map((t) => t.id));
       [...store.templates.values()].filter((t) => !t.deleted && !keepT.has(t.id)).forEach((t) => tx.updateTemplate(t.id, { deleted: true }));
       data.templates.forEach((t) => { tx.touch('tpl', t.id); store.templates.set(t.id, { ...t, updatedAt: tx.t }); });
+      // 共通メモを含まない古い形式のバックアップでは、今の共通メモを残す
+      if (hasGlobal) tx.updateGlobalNote(data.globalNote.text);
     });
   }
   ctx.refreshAll();

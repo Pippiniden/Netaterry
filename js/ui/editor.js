@@ -95,8 +95,7 @@ export function refreshEditor() {
   els.tagbox.render();
   els.noteBtn.classList.toggle('has', !!n.sideNote.trim());
   updateTagToggle();
-  const snTa = $('#sidenote-panel textarea');
-  if (snTa && snTa.dataset.id === curId && snTa.value !== n.sideNote) snTa.value = n.sideNote;
+  if (sideNoteOpen) renderSideNote();
 }
 
 export function focusTitle() {
@@ -206,27 +205,88 @@ function createTagBox(id) {
   return { el, render, input };
 }
 
-// ---------- サイドメモ ----------
+// ---------- サイドメモ（「このノード」「共通」の2タブ） ----------
 let sideNoteOpen = false;
-export function toggleSideNote(force) {
+const GLOBAL_ID = '__global';
+
+/** force: true/false で開閉。tab を指定するとそのタブで開く */
+export function toggleSideNote(force, tab) {
   sideNoteOpen = force ?? !sideNoteOpen;
+  if (tab) setNoteTab(tab, false);
   renderSideNote();
   if (sideNoteOpen) $('#sidenote-panel textarea')?.focus();
 }
+export function isSideNoteOpen() { return sideNoteOpen; }
+
+function setNoteTab(tab, rerender = true) {
+  if (store.ui.noteTab === tab) return;
+  store.ui.noteTab = tab;
+  store.saveUI();
+  if (rerender) { renderSideNote(); $('#sidenote-panel textarea')?.focus(); }
+}
+
 export function renderSideNote() {
   const panel = $('#sidenote-panel');
+  if (!sideNoteOpen) { panel.hidden = true; panel.innerHTML = ''; return; }
   const n = curId && store.get(curId);
-  if (!sideNoteOpen || !n) { panel.hidden = true; panel.innerHTML = ''; return; }
+  const hasNode = !!(n && !n.deleted);
+  // ノード未選択のときは共通タブだけ使える
+  const tab = hasNode ? store.ui.noteTab : 'global';
+  const taId = tab === 'global' ? GLOBAL_ID : curId;
+  const value = tab === 'global' ? store.globalNote.text : n.sideNote;
+
   const existing = panel.querySelector('textarea');
-  if (existing && existing.dataset.id === curId) { panel.hidden = false; panel.querySelector('strong').textContent = `メモ：${n.title || '無題'}`; return; }
+  if (existing && existing.dataset.id === taId && existing.dataset.tab === tab) {
+    // 同じ対象を表示中: 見出しとタブの印だけ更新
+    updateNoteTabs(panel, hasNode, tab, n);
+    if (existing.value !== value && document.activeElement !== existing) existing.value = value;
+    panel.hidden = false;
+    return;
+  }
   panel.innerHTML = '';
-  const ta = h('textarea', { placeholder: '本文とは別の作業用メモ（閲覧モードには表示されません）', 'aria-label': 'サイドメモ', dataset: { id: curId } });
-  ta.value = n.sideNote;
-  const id = curId;
-  ta.addEventListener('input', () => store.batch('サイドメモ編集', (tx) => tx.update(id, { sideNote: ta.value }), { coalesce: 'note:' + id }));
+  const ta = h('textarea', {
+    placeholder: tab === 'global'
+      ? 'どのノードからでも見られる共通のメモ（用語集・登場人物の早見表・ToDo など）'
+      : '本文とは別の、このノード用の作業メモ（閲覧モードには表示されません）',
+    'aria-label': tab === 'global' ? '共通メモ' : 'このノードのサイドメモ',
+    dataset: { id: taId, tab },
+  });
+  ta.value = value;
+  if (tab === 'global') {
+    ta.addEventListener('input', () => store.batch('共通メモ編集', (tx) => tx.updateGlobalNote(ta.value), { coalesce: 'global-note' }));
+  } else {
+    const id = curId;
+    ta.addEventListener('input', () => store.batch('サイドメモ編集', (tx) => tx.update(id, { sideNote: ta.value }), { coalesce: 'note:' + id }));
+  }
   ta.addEventListener('keydown', (e) => autoIndent(e, ta));
-  panel.append(h('div', { class: 'sn-head' }, h('span', { html: icon('note', 18) }), h('strong', {}, `メモ：${n.title || '無題'}`), iconBtn('close', 'サイドメモを閉じる', () => toggleSideNote(false))), ta);
+  const tabBtn = (key, label) => h('button', {
+    type: 'button', role: 'tab', class: 'sn-tab', dataset: { tab: key },
+    'aria-selected': String(tab === key), onclick: () => setNoteTab(key),
+  }, h('span', { class: 'lbl' }, label), h('span', { class: 'mark', 'aria-hidden': 'true' }));
+  panel.append(
+    h('div', { class: 'sn-head' },
+      h('div', { class: 'sn-tabs', role: 'tablist', 'aria-label': 'サイドメモの種類' },
+        tabBtn('node', 'このノード'),
+        tabBtn('global', '共通')),
+      iconBtn('close', 'サイドメモを閉じる', () => toggleSideNote(false))),
+    h('div', { class: 'sn-sub' }),
+    ta);
+  updateNoteTabs(panel, hasNode, tab, n);
   panel.hidden = false;
+}
+
+function updateNoteTabs(panel, hasNode, tab, n) {
+  const nodeTab = panel.querySelector('.sn-tab[data-tab="node"]');
+  const globalTab = panel.querySelector('.sn-tab[data-tab="global"]');
+  nodeTab.disabled = !hasNode;
+  nodeTab.title = hasNode ? '' : 'ノードを選ぶと使えます';
+  nodeTab.setAttribute('aria-selected', String(tab === 'node'));
+  globalTab.setAttribute('aria-selected', String(tab === 'global'));
+  nodeTab.classList.toggle('has', !!(hasNode && n.sideNote.trim()));
+  globalTab.classList.toggle('has', !!store.globalNote.text.trim());
+  panel.querySelector('.sn-sub').textContent = tab === 'global'
+    ? 'すべてのノードで共通'
+    : `ノード：${n.title || '無題'}`;
 }
 
 // ---------- 特殊文字の点検ビュー（読み取り専用） ----------
@@ -297,7 +357,7 @@ export function gotoMatch(delta = 0) {
   let target;
   if (m.field === 'title') target = els.title;
   else if (m.field === 'body') target = els.body;
-  else { toggleSideNote(true); target = $('#sidenote-panel textarea'); }
+  else { toggleSideNote(true, 'node'); target = $('#sidenote-panel textarea'); }
   if (!target) return;
   target.focus({ preventScroll: true });
   try { target.setSelectionRange(m.start, m.end); } catch { /* noop */ }
