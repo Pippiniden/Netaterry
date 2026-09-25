@@ -102,7 +102,7 @@ export function parseMarkdown(src) {
   const text = normalizeNewlines(src);
   const lines = text.split('\n');
   if (lines.length && lines[lines.length - 1] === '') lines.pop();
-  const roundtrip = /^<!-- netaterry v\d+/.test(lines[0] || '');
+  const roundtrip = /^<!-- (?:netaterry|novelmemo) v\d+/.test(lines[0] || ''); // novelmemo は旧アプリ名
   return roundtrip ? parseRoundtrip(lines) : parsePlain(lines);
 }
 

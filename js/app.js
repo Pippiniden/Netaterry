@@ -157,6 +157,7 @@ async function init() {
 
   window.addEventListener('pagehide', () => store.flush());
   registerSW();
+  if (store.importedLegacy) toast(`旧版（ノベルメモ）のデータ ${store.importedLegacy} 件を引き継ぎました`, { ms: 6000 });
   if (isMobile() && !store.ui.selectedId) ctx.showScreen('tree');
 }
 

@@ -40,6 +40,20 @@ function txDone(tx) {
   return new Promise((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
 }
 
+const LEGACY_DB_NAMES = ['novelmemo']; // 旧アプリ名「ノベルメモ」時代のデータベース
+const LEGACY_META_KEYS = ['settings', 'ui', 'dirty', 'lastSyncedRemoteModifiedTime', 'driveFileId', 'globalNote'];
+
+/** 既存のデータベースだけを開く（存在しなければ作らずに null） */
+function openExisting(name) {
+  return new Promise((resolve) => {
+    let req;
+    try { req = indexedDB.open(name); } catch { return resolve(null); }
+    req.onupgradeneeded = (e) => { if (e.oldVersion === 0) req.transaction.abort(); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
+
 export const db = {
   get isPersistentStore() { return !memoryFallback; },
 
@@ -90,6 +104,37 @@ export const db = {
     nodes.forEach((n) => ns.put(n));
     templates.forEach((t) => ts.put(t));
     await txDone(tx);
+  },
+
+  /**
+   * 旧アプリ名のデータベースにデータがあれば、今のデータベースへ写す（旧データベースは消さずに残す）。
+   * @returns 引き継いだノード数（0 なら何もしていない）
+   */
+  async importLegacy() {
+    const d = await open();
+    if (!d) return 0;
+    for (const name of LEGACY_DB_NAMES) {
+      const old = await openExisting(name);
+      if (!old) continue;
+      try {
+        const stores = ['nodes', 'templates', 'meta'].filter((s) => old.objectStoreNames.contains(s));
+        if (!stores.includes('nodes')) continue;
+        const tx = old.transaction(stores, 'readonly');
+        const nodes = await reqP(tx.objectStore('nodes').getAll());
+        if (!nodes.length) continue;
+        const templates = stores.includes('templates') ? await reqP(tx.objectStore('templates').getAll()) : [];
+        const meta = {};
+        if (stores.includes('meta')) for (const k of LEGACY_META_KEYS) meta[k] = await reqP(tx.objectStore('meta').get(k));
+        await this.replaceAll({ nodes, templates });
+        for (const [k, v] of Object.entries(meta)) if (v !== undefined) await this.setMeta(k, v);
+        return nodes.length;
+      } catch (e) {
+        console.warn('旧データの引き継ぎに失敗しました', e);
+      } finally {
+        old.close();
+      }
+    }
+    return 0;
   },
 
   async getMeta(key, def = undefined) {

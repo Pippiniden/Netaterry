@@ -3,6 +3,7 @@ import { CONFIG } from '../config.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const FILE_NAME = 'netaterry.json';
+const LEGACY_FILE_NAMES = ['novelmemo.json']; // 旧アプリ名時代の保存ファイル。見つかればそのまま使い続ける
 const TOKEN_KEY = 'netaterry.token';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
@@ -91,10 +92,12 @@ async function api(url, init = {}) {
 
 export const drive = {
   async findFile() {
-    const q = encodeURIComponent(`name='${FILE_NAME}' and trashed=false`);
-    const res = await api(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`);
+    const names = [FILE_NAME, ...LEGACY_FILE_NAMES].map((n) => `name='${n}'`).join(' or ');
+    const q = encodeURIComponent(`(${names}) and trashed=false`);
+    const res = await api(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`);
     const { files } = await res.json();
-    return files && files.length ? files[0] : null;
+    if (!files || !files.length) return null;
+    return files.find((f) => f.name === FILE_NAME) || files[0];
   },
 
   async getModifiedTime(fileId) {

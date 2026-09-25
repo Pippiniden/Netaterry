@@ -1,6 +1,6 @@
 // 共通ユーティリティ
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2; // v2: 共通メモ（globalNote）を追加
 const FUTURE_TOLERANCE = 24 * 60 * 60 * 1000; // 1日以上未来の時刻は補正する
 
 export function uuid() {

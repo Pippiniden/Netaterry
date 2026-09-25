@@ -38,9 +38,16 @@ export function migrate(data) {
   const v = data.schemaVersion ?? 0;
   if (v > SCHEMA_VERSION) throw new Error(`新しい形式のデータです（schemaVersion ${v}）。アプリを更新してください。`);
   // v0（schemaVersion なし）→ v1: フィールド補完のみ
+  // v1 → v2: 共通メモ（globalNote）を追加。v1 には無いので空で補う
   const nodes = (Array.isArray(data.nodes) ? data.nodes : []).filter((n) => n && n.id != null).map(normalizeNode);
   const templates = (Array.isArray(data.templates) ? data.templates : []).filter((t) => t && t.id != null).map(normalizeTemplate);
-  return { schemaVersion: SCHEMA_VERSION, nodes, templates };
+  return { schemaVersion: SCHEMA_VERSION, nodes, templates, globalNote: normalizeGlobalNote(data.globalNote) };
+}
+
+/** 共通メモ（どのノードからでも見られるメモ）。空で未編集なら updatedAt は 0 */
+export function normalizeGlobalNote(g) {
+  if (!g || typeof g !== 'object') return { text: '', updatedAt: 0 };
+  return { text: String(g.text ?? ''), updatedAt: g.updatedAt ? clampTime(g.updatedAt) : 0 };
 }
 
 function mergeList(a, b) {
@@ -64,7 +71,14 @@ export function mergeData(local, remote) {
     schemaVersion: SCHEMA_VERSION,
     nodes: mergeList(local.nodes, remote.nodes),
     templates: mergeList(local.templates, remote.templates),
+    globalNote: mergeGlobalNote(local.globalNote, remote.globalNote),
   };
+}
+
+/** 共通メモも新しい方を採用（Last Write Wins） */
+function mergeGlobalNote(a, b) {
+  const x = normalizeGlobalNote(a), y = normalizeGlobalNote(b);
+  return y.updatedAt > x.updatedAt ? y : x;
 }
 
 /** 保持期間を過ぎたトゥームストーンを物理削除 */
@@ -74,7 +88,7 @@ export function cleanupTombstones(data, retentionDays, t = Date.now()) {
   const nodes = data.nodes.filter(keep);
   const templates = data.templates.filter(keep);
   return {
-    data: { schemaVersion: SCHEMA_VERSION, nodes, templates },
+    data: { schemaVersion: SCHEMA_VERSION, nodes, templates, globalNote: normalizeGlobalNote(data.globalNote) },
     removed: data.nodes.length - nodes.length + data.templates.length - templates.length,
   };
 }
@@ -84,6 +98,7 @@ export function sameData(a, b) {
   const key = (d) => JSON.stringify([
     [...d.nodes].sort((x, y) => (x.id < y.id ? -1 : 1)).map((n) => [n.id, n.updatedAt, n.deleted]),
     [...d.templates].sort((x, y) => (x.id < y.id ? -1 : 1)).map((n) => [n.id, n.updatedAt, n.deleted]),
+    normalizeGlobalNote(d.globalNote).updatedAt,
   ]);
   return key(a) === key(b);
 }
