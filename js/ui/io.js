@@ -11,7 +11,7 @@ const safeName = (s) => (s || '無題').replace(/[\\/:*?"<>|\r\n]+/g, '_').slice
 // ---------- バックアップ ----------
 export function downloadBackup() {
   const data = store.exportData();
-  downloadText(`novelmemo-backup-${stamp()}.json`, JSON.stringify(data, null, 1), 'application/json');
+  downloadText(`netaterry-backup-${stamp()}.json`, JSON.stringify(data, null, 1), 'application/json');
   toast('バックアップを保存しました');
 }
 
@@ -21,7 +21,7 @@ export async function restoreBackup() {
   let data;
   try {
     const raw = JSON.parse(f.text);
-    if (raw && raw.kind === 'novelmemo-settings') { toast('これは設定ファイルです。設定画面から読み込んでください。'); return; }
+    if (raw && raw.kind === 'netaterry-settings') { toast('これは設定ファイルです。設定画面から読み込んでください。'); return; }
     data = migrate(raw);
   } catch (e) { await modal({ title: '読み込めません', body: h('p', {}, e.message) }); return; }
   const live = data.nodes.filter((n) => !n.deleted);
@@ -114,7 +114,7 @@ export async function openExport() {
     } else {
       out = exportText(roots, store, { format: fmt, includeNote, withDesc });
     }
-    const base = scope === 'all' ? 'novelmemo' : safeName(sel.title);
+    const base = scope === 'all' ? 'netaterry' : safeName(sel.title);
     fname = `${base}-${stamp()}.${fmt === 'plain' || fmt === 'sheet' ? 'txt' : 'md'}`;
     preview.textContent = out.length > 3000 ? out.slice(0, 3000) + '\n…（以下省略）' : out;
   };

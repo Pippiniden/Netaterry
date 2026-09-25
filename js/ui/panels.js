@@ -270,8 +270,8 @@ export async function openSettings() {
 }
 
 function exportSettings() {
-  const data = { kind: 'novelmemo-settings', version: 1, settings: store.settings };
-  downloadText(`novelmemo-settings-${stamp()}.json`, JSON.stringify(data, null, 2), 'application/json');
+  const data = { kind: 'netaterry-settings', version: 1, settings: store.settings };
+  downloadText(`netaterry-settings-${stamp()}.json`, JSON.stringify(data, null, 2), 'application/json');
 }
 
 async function importSettings() {
@@ -280,7 +280,7 @@ async function importSettings() {
   let data;
   try {
     data = JSON.parse(f.text);
-    if (data.kind !== 'novelmemo-settings' || !data.settings) throw new Error('設定ファイルではありません');
+    if (data.kind !== 'netaterry-settings' || !data.settings) throw new Error('設定ファイルではありません');
   } catch (e) { toast('読み込めません：' + e.message); return; }
   const wrap = h('div', {},
     h('p', {}, '画面の幅に依存する項目（余白）を適用しますか？'),
