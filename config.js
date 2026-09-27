@@ -2,5 +2,5 @@
 // Google Cloud Console で作成した「OAuth 2.0 クライアントID（ウェブアプリケーション）」を貼り付けてください。
 // 未設定のままでも、アプリはこの端末内だけで全機能を使えます。
 export const CONFIG = {
-  GOOGLE_CLIENT_ID: 'YOUR_CLIENT_ID.apps.googleusercontent.com',
+  GOOGLE_CLIENT_ID: '777934051399-ibkrvigjvteprdvv90h8vfivco3bu1c3.apps.googleusercontent.com',
 };
