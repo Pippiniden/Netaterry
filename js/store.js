@@ -1,6 +1,9 @@
-// アプリの状態管理（ノード・テンプレート・Undo/Redo・永続化）
+// アプリの状態管理（作品・ノード・テンプレート・Undo/Redo・永続化）
+//
+// 作品（work）ごとにノードと共通メモを持ち、テンプレートと設定は全作品で共通。
+// メモリ上に持つのは「今開いている作品」だけで、切り替えるたびに読み込み直す。
 import { db } from './db.js';
-import { migrate, normalizeNode, normalizeTemplate, normalizeGlobalNote } from './merge.js';
+import { migrate, normalizeNode, normalizeTemplate, normalizeGlobalNote, normalizeWork, reassignNodeIds, KIND } from './merge.js';
 import { uuid, now, clone, orderBetween, SCHEMA_VERSION } from './util.js';
 
 export const DEFAULT_SETTINGS = {
@@ -21,6 +24,7 @@ export const DEFAULT_SETTINGS = {
 
 export const DEFAULT_UI = {
   selectedId: null,
+  currentWorkId: null,
   filter: { tags: [], mode: 'and', display: 'tree', includeDesc: false },
   searchHistory: [],
   searchOpts: { note: false, trash: false, scope: false, withFilter: true, sort: 'relevance', regex: false, kanaFold: null },
@@ -28,50 +32,240 @@ export const DEFAULT_UI = {
   noteTab: 'node', // サイドメモのタブ: 'node'（このノード） | 'global'（共通）
 };
 
+/** 作品に分かれる前のデータを移した作品の id。複数の端末で移しても同じ作品になるよう固定値にする */
+export const LEGACY_WORK_ID = 'first-work';
+const emptySync = () => ({ fileId: null, remoteMT: null, dirty: false });
+
+/** 作品レコードを作る */
+export function makeWork({ id = uuid(), name = '新しい作品', globalNote = null, dirty = true, seed = false, needsDownload = false } = {}) {
+  const t = now();
+  const w = {
+    id, name, nameUpdatedAt: t, createdAt: t, openedAt: t,
+    globalNote: normalizeGlobalNote(globalNote),
+    sync: { ...emptySync(), dirty },
+  };
+  if (seed) w.seed = true;               // 初回起動のサンプルのまま（未編集）。ドライブに作品があればそちらを優先して消す
+  if (needsDownload) w.needsDownload = true; // ドライブにだけある作品（まだ中身を取得していない）
+  return w;
+}
+
 const listeners = new Map();
 function emit(ev, info) { (listeners.get(ev) || []).forEach((fn) => { try { fn(info); } catch (e) { console.error(e); } }); }
+const newPending = () => ({ nodes: new Set(), templates: new Set(), delNodes: new Set(), delTemplates: new Set(), global: false });
 
 export const store = {
-  nodes: new Map(),
-  templates: new Map(),
-  globalNote: { text: '', updatedAt: 0 }, // 共通メモ（どのノードからでも見られる）
+  works: new Map(),          // 作品レコード（全作品）
+  workId: null,              // 今開いている作品
+  nodes: new Map(),          // 今開いている作品のノード
+  templates: new Map(),      // テンプレート（全作品共通）
+  globalNote: { text: '', updatedAt: 0 }, // 今開いている作品の共通メモ
   settings: clone(DEFAULT_SETTINGS),
   ui: clone(DEFAULT_UI),
-  meta: { dirty: false, lastSyncedRemoteModifiedTime: null, driveFileId: null },
+  // テンプレートの同期状態・ドライブのフォルダ・旧版（アプリ専用領域）の同期データの引き継ぎ状況
+  meta: { templatesSync: emptySync(), driveFolderId: null, legacyDrive: null, everSynced: false },
   editCounter: 0,
   history: [],
   future: [],
   _childCache: null,
-  _pending: { nodes: new Set(), templates: new Set(), delNodes: new Set(), delTemplates: new Set(), global: false },
+  _pending: newPending(),
   _flushTimer: null,
 
   on(ev, fn) { if (!listeners.has(ev)) listeners.set(ev, []); listeners.get(ev).push(fn); },
+  off(ev, fn) { const a = listeners.get(ev); if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } },
   emit,
 
   async init() {
+    const initialized = await db.getMeta('initialized', false);
     // 旧アプリ名（ノベルメモ）で使っていたデータがあれば、初回起動時に引き継ぐ
-    if (!(await db.getMeta('initialized', false))) {
+    if (!initialized) {
       const n = await db.importLegacy();
-      if (n) { await db.setMeta('initialized', true); this.importedLegacy = n; }
+      if (n) this.importedLegacy = n;
     }
-    const { nodes, templates } = await db.loadAll();
-    const data = migrate({ schemaVersion: SCHEMA_VERSION, nodes, templates });
-    data.nodes.forEach((n) => this.nodes.set(n.id, n));
-    data.templates.forEach((t) => this.templates.set(t.id, t));
+    // 作品に分かれる前（v1.3 まで）のデータを「最初の作品」にする
+    const legacy = { driveFileId: null };
+    const migrated = await db.migrateToWorks((m) => {
+      legacy.driveFileId = m.driveFileId;
+      return makeWork({ id: LEGACY_WORK_ID, name: '最初の作品', globalNote: m.globalNote, dirty: true });
+    });
     const s = await db.getMeta('settings', null);
     if (s) this.settings = deepMerge(clone(DEFAULT_SETTINGS), s);
     const ui = await db.getMeta('ui', null);
     if (ui) this.ui = deepMerge(clone(DEFAULT_UI), ui);
-    this.meta.dirty = await db.getMeta('dirty', false);
-    this.meta.lastSyncedRemoteModifiedTime = await db.getMeta('lastSyncedRemoteModifiedTime', null);
-    this.meta.driveFileId = await db.getMeta('driveFileId', null);
-    this.globalNote = normalizeGlobalNote(await db.getMeta('globalNote', null));
-    this._childCache = null;
-    if (this.nodes.size === 0 && !(await db.getMeta('initialized', false))) {
-      seedSample(this);
-      await this.flush();
+    this.meta.templatesSync = { ...emptySync(), ...(await db.getMeta('templatesSync', null)) };
+    this.meta.driveFolderId = await db.getMeta('driveFolderId', null);
+    this.meta.legacyDrive = await db.getMeta('legacyDrive', null);
+    this.meta.everSynced = await db.getMeta('everSynced', false);
+    if (migrated) {
+      this.migratedWork = migrated.id;
+      // 以前ドライブと同期していた端末: 旧保存先のデータも取り込めるようにしておく
+      if (legacy.driveFileId) { this.meta.legacyDrive = { pending: true }; await db.setMeta('legacyDrive', this.meta.legacyDrive); this.meta.everSynced = true; await db.setMeta('everSynced', true); }
+      this.meta.templatesSync.dirty = true; // 今あるテンプレートは新しい保存先へ送る
+      await db.setMeta('templatesSync', this.meta.templatesSync);
     }
+
+    (await db.loadWorks()).forEach((w) => this.works.set(w.id, w));
+    const templates = (await db.loadTemplates()).map(normalizeTemplate);
+    templates.forEach((t) => this.templates.set(t.id, t));
+
+    if (!this.liveWorks().length) {
+      if (!initialized && !migrated) {
+        // 初回起動: 使い方とサンプルの作品を作る
+        const w = makeWork({ name: '使い方とサンプル', dirty: false, seed: true });
+        this.works.set(w.id, w);
+        this.workId = w.id;
+        seedSample(this);
+        w.globalNote = clone(this.globalNote);
+        await db.putWork(clone(w));
+        await this.flush();
+      } else {
+        const w = makeWork({ name: '新しい作品' });
+        this.works.set(w.id, w);
+        await db.putWork(clone(w));
+      }
+    }
+    const cur = this.works.get(this.ui.currentWorkId);
+    await this._load(cur && !cur.deleted ? cur.id : this.liveWorks()[0].id);
     await db.setMeta('initialized', true);
+  },
+
+  // ---------- 作品 ----------
+  get work() { return this.works.get(this.workId); },
+  liveWorks() {
+    return [...this.works.values()].filter((w) => !w.deleted).sort((a, b) => a.name.localeCompare(b.name, 'ja') || a.createdAt - b.createdAt);
+  },
+  /** 作品の中身を読み込んで「今開いている作品」にする（保存は呼び出し側で済ませておく） */
+  async _load(workId) {
+    const w = this.works.get(workId);
+    this.workId = workId;
+    this.nodes = new Map((await db.loadNodes(workId)).map((n) => { const x = normalizeNode(n); return [x.id, x]; }));
+    this.globalNote = normalizeGlobalNote(w.globalNote);
+    this._childCache = null;
+    this._pending = newPending();
+    this.history = [];
+    this.future = [];
+    this.ui.currentWorkId = workId;
+    this.ui.selectedId = w.selectedId && this.nodes.get(w.selectedId) && !this.nodes.get(w.selectedId).deleted ? w.selectedId : null;
+    this.ui.filter.tags = [];
+    w.openedAt = now();
+    await db.putWork(clone(w));
+    this.saveUI();
+  },
+  /** 作品を切り替える */
+  async switchWork(workId) {
+    if (workId === this.workId || !this.works.get(workId) || this.works.get(workId).deleted) return;
+    const cur = this.work;
+    if (cur) cur.selectedId = this.ui.selectedId;
+    await this.flush();
+    if (cur) await this.saveWork(cur.id);
+    emit('beforeWorkSwitch', { from: this.workId, to: workId });
+    await this._load(workId);
+    emit('work', { id: workId });
+    emit('change', { fields: new Set(['structure', 'templates', 'title', 'body', 'tags', 'sideNote', 'globalNote']), source: 'work-switch', ids: new Set() });
+  },
+  /** 新しい作品を作る（nodes を渡すとその中身で作る） */
+  async createWork(name, { id, nodes = [], globalNote = null, open = true } = {}) {
+    const w = makeWork({ ...(id ? { id } : {}), name: String(name || '').trim() || '新しい作品', globalNote });
+    this.works.set(w.id, w);
+    await db.putWork(clone(w));
+    if (nodes.length) await db.replaceNodes(w.id, nodes.map((n) => normalizeNode(n)));
+    emit('works', {});
+    this.setDirtyFlag();
+    if (open) await this.switchWork(w.id);
+    return w;
+  },
+  async renameWork(workId, name) {
+    const w = this.works.get(workId);
+    name = String(name || '').trim();
+    if (!w || !name || name === w.name) return;
+    w.name = name;
+    w.nameUpdatedAt = now();
+    this._touchWork(w);
+    await this.saveWork(workId);
+    emit('works', {});
+  },
+  /** 作品の中身（ノード・共通メモ）を複製して新しい作品にする */
+  async duplicateWork(workId, name) {
+    if (workId === this.workId) await this.flush();
+    const d = await this.loadWorkData(workId);
+    const nodes = reassignNodeIds(d.nodes.filter((n) => !n.purged), uuid).map((n) => ({ ...n, updatedAt: now() }));
+    const g = d.globalNote.text ? { text: d.globalNote.text, updatedAt: now() } : null;
+    return this.createWork(name, { nodes, globalNote: g });
+  },
+  /** 作品を削除する。ドライブにあるものは次の同期でドライブのゴミ箱へ移す */
+  async deleteWork(workId) {
+    const w = this.works.get(workId);
+    if (!w || w.deleted) return;
+    if (workId === this.workId) {
+      const next = this.liveWorks().find((x) => x.id !== workId);
+      if (next) await this.switchWork(next.id);
+      else await this.createWork('新しい作品');
+    }
+    if (w.sync.fileId) {
+      w.deleted = true;
+      w.deletedAt = now();
+      await db.replaceNodes(workId, []);
+      await this.saveWork(workId);
+    } else {
+      this.works.delete(workId);
+      await db.removeWork(workId);
+    }
+    emit('works', {});
+    this.setDirtyFlag();
+  },
+  /** 作品をこの端末から外す（同期で「ドライブ側で削除された」と分かったとき） */
+  async forgetWork(workId) {
+    if (workId === this.workId) {
+      const next = this.liveWorks().find((x) => x.id !== workId);
+      if (next) await this.switchWork(next.id); else await this.createWork('新しい作品');
+    }
+    this.works.delete(workId);
+    await db.removeWork(workId);
+    emit('works', {});
+  },
+  /** ドライブにだけある作品を一覧に加える（中身は開いたとき・同期のときに取得） */
+  async addRemoteWork({ id, name, fileId }) {
+    const w = makeWork({ id, name: name || '無題の作品', dirty: false, needsDownload: true });
+    w.nameUpdatedAt = 0;
+    w.sync.fileId = fileId;
+    this.works.set(w.id, w);
+    await db.putWork(clone(w));
+    emit('works', {});
+    return w;
+  },
+  async saveWork(workId) {
+    const w = this.works.get(workId);
+    if (!w) return;
+    if (workId === this.workId) w.globalNote = clone(this.globalNote);
+    await db.putWork(clone(w));
+  },
+  _touchWork(w) {
+    w.sync.dirty = true;
+    delete w.seed;
+    this.setDirtyFlag();
+  },
+
+  /** 作品の中身を取り出す（今開いている作品ならメモリから） */
+  async loadWorkData(workId) {
+    const w = this.works.get(workId);
+    if (workId === this.workId) return this.exportWork();
+    return {
+      schemaVersion: SCHEMA_VERSION, kind: KIND.work,
+      work: { id: w.id, name: w.name, nameUpdatedAt: w.nameUpdatedAt },
+      nodes: (await db.loadNodes(workId)).map(normalizeNode),
+      globalNote: normalizeGlobalNote(w.globalNote),
+    };
+  },
+  /** 開いていない作品の中身を置き換える（同期用） */
+  async saveWorkData(workId, data) {
+    if (workId === this.workId) return this.replaceData(data, { source: 'sync-replace', keepHistory: true });
+    const w = this.works.get(workId);
+    const d = migrate(data);
+    await db.replaceNodes(workId, d.nodes);
+    w.globalNote = d.globalNote;
+    if (d.work && d.work.nameUpdatedAt >= w.nameUpdatedAt) { w.name = d.work.name; w.nameUpdatedAt = d.work.nameUpdatedAt; }
+    delete w.needsDownload;
+    await db.putWork(clone(w));
+    emit('works', {});
   },
 
   // ---------- 参照 ----------
@@ -214,7 +408,7 @@ export const store = {
         this.future = [];
       }
     }
-    this._afterChange(fields, 'local', entry.changes.map((c) => c.id));
+    this._afterChange(fields, 'local', entry.changes);
   },
 
   _src(kind, id) {
@@ -228,14 +422,16 @@ export const store = {
     else this._pending.global = true;
   },
 
-  _afterChange(fields, source, ids = []) {
+  _afterChange(fields, source, changes = []) {
     if ([...fields].some((f) => ['structure', 'parentId', 'order', 'deleted', 'collapsed'].includes(f))) this._childCache = null;
     if (source !== 'sync-replace') {
       this.editCounter++;
-      this.setDirty(true);
+      // 変わったもの（作品の中身・テンプレート）ごとに「未同期」にする
+      if (changes.some((c) => c.kind !== 'tpl') && this.work) this._touchWork(this.work);
+      if (changes.some((c) => c.kind === 'tpl')) this.setDirty(true, 'templates');
     }
     this._scheduleFlush();
-    emit('change', { fields, source, ids: new Set(ids) });
+    emit('change', { fields, source, ids: new Set(changes.map((c) => c.id)) });
   },
 
   _applySnapshots(list, which) {
@@ -264,7 +460,7 @@ export const store = {
         fields.add('templates');
       }
     }
-    this._afterChange(fields, 'undo', list.map((c) => c.id));
+    this._afterChange(fields, 'undo', list);
   },
 
   canUndo() { return this.history.length > 0; },
@@ -304,57 +500,107 @@ export const store = {
     clearTimeout(this._flushTimer);
     const p = this._pending;
     if (!p.nodes.size && !p.templates.size && !p.delNodes.size && !p.delTemplates.size && !p.global) return;
+    const workId = this.workId;
     const nodes = [...p.nodes].map((id) => this.nodes.get(id)).filter(Boolean);
     const templates = [...p.templates].map((id) => this.templates.get(id)).filter(Boolean);
-    const dels = { nodes: [...p.delNodes], templates: [...p.delTemplates] };
     const writeGlobal = p.global;
-    this._pending = { nodes: new Set(), templates: new Set(), delNodes: new Set(), delTemplates: new Set(), global: false };
+    this._pending = newPending();
     try {
-      await db.write({ nodes: clone(nodes), templates: clone(templates) }, dels);
-      if (writeGlobal) await db.setMeta('globalNote', clone(this.globalNote));
+      if (nodes.length || p.delNodes.size) await db.writeNodes(workId, clone(nodes), [...p.delNodes]);
+      if (templates.length || p.delTemplates.size) await db.writeTemplates(clone(templates), [...p.delTemplates]);
+      if (writeGlobal) await this.saveWork(workId);
     } catch (e) {
       console.error('保存に失敗しました', e);
       emit('error', { message: 'ローカル保存に失敗しました: ' + e.message });
     }
   },
-  setDirty(v) {
-    if (this.meta.dirty === v) return;
-    this.meta.dirty = v;
-    db.setMeta('dirty', v);
-    emit('dirty', v);
-  },
-  async setMeta(key, v) { this.meta[key] = v; await db.setMeta(key, v); },
 
-  /** データ一式（保存ファイル形式） */
-  exportData() {
+  // ---------- 同期状態 ----------
+  /** 未同期の変更があるか（どれか1つの作品・テンプレート） */
+  isDirty() {
+    return this.meta.templatesSync.dirty || [...this.works.values()].some((w) => w.sync.dirty || (w.deleted && w.sync.fileId));
+  },
+  /** 同期状態の表示を更新 */
+  setDirtyFlag() { emit('dirty', this.isDirty()); },
+  /**
+   * 未同期の印を付け外しする
+   * @param which 'work'（今開いている作品） | 'templates' | 'all'（両方）
+   */
+  setDirty(v, which = 'all') {
+    if ((which === 'work' || which === 'all') && this.work && this.work.sync.dirty !== v) {
+      this.work.sync.dirty = v;
+      if (v) delete this.work.seed;
+      this.saveWork(this.workId);
+    }
+    if ((which === 'templates' || which === 'all') && this.meta.templatesSync.dirty !== v) {
+      this.meta.templatesSync.dirty = v;
+      db.setMeta('templatesSync', clone(this.meta.templatesSync));
+    }
+    this.setDirtyFlag();
+  },
+  get dirty() { return this.isDirty(); },
+  async setMeta(key, v) { this.meta[key] = v; await db.setMeta(key, clone(v)); },
+  async saveTemplatesSync() { await db.setMeta('templatesSync', clone(this.meta.templatesSync)); this.setDirtyFlag(); },
+
+  // ---------- 書き出し・置き換え ----------
+  /** 今開いている作品のデータ（作品ファイル形式） */
+  exportWork() {
+    const w = this.work;
     return {
       schemaVersion: SCHEMA_VERSION,
+      kind: KIND.work,
+      work: { id: w.id, name: w.name, nameUpdatedAt: w.nameUpdatedAt },
       nodes: [...this.nodes.values()].map(clone),
-      templates: [...this.templates.values()].map(clone),
       globalNote: clone(this.globalNote),
     };
   },
+  exportData() { return this.exportWork(); },
+  /** テンプレート（テンプレートファイル形式） */
+  exportTemplates(list = [...this.templates.values()]) {
+    return { schemaVersion: SCHEMA_VERSION, kind: KIND.templates, templates: list.map(clone) };
+  },
+  /** すべての作品とテンプレート（バックアップ形式） */
+  async exportBackup() {
+    await this.flush();
+    const works = [];
+    for (const w of this.liveWorks()) works.push(await this.loadWorkData(w.id));
+    return { schemaVersion: SCHEMA_VERSION, kind: KIND.backup, exportedAt: new Date().toISOString(), works, templates: [...this.templates.values()].map(clone) };
+  },
 
-  /** データを丸ごと置き換える（同期・インポート） */
+  /** 今開いている作品の中身を丸ごと置き換える（同期・インポート） */
   async replaceData(data, { source = 'sync-replace', keepHistory = false } = {}) {
     const d = migrate(data);
+    const w = this.work;
     // 開閉状態はローカルの状態を優先
     const collapsed = new Map([...this.nodes.values()].map((n) => [n.id, n.collapsed]));
     this.nodes = new Map(d.nodes.map((n) => [n.id, collapsed.has(n.id) ? { ...n, collapsed: collapsed.get(n.id) } : n]));
-    this.templates = new Map(d.templates.map((t) => [t.id, t]));
     this.globalNote = d.globalNote;
+    if (d.work && d.work.nameUpdatedAt > w.nameUpdatedAt) { w.name = d.work.name; w.nameUpdatedAt = d.work.nameUpdatedAt; emit('works', {}); }
+    delete w.needsDownload;
     this._childCache = null;
-    this._pending = { nodes: new Set(), templates: new Set(), delNodes: new Set(), delTemplates: new Set(), global: false };
+    this._pending.nodes = new Set();
+    this._pending.delNodes = new Set();
+    this._pending.global = false;
     if (!keepHistory) { this.history = []; this.future = []; }
-    await db.replaceAll({ nodes: clone([...this.nodes.values()]), templates: clone([...this.templates.values()]) });
-    await db.setMeta('globalNote', clone(this.globalNote));
-    if (source !== 'sync-replace') { this.editCounter++; this.setDirty(true); }
-    emit('change', { fields: new Set(['structure', 'templates', 'title', 'body', 'tags', 'sideNote', 'globalNote']), source, ids: new Set() });
+    await db.replaceNodes(this.workId, clone([...this.nodes.values()]));
+    await this.saveWork(this.workId);
+    if (source !== 'sync-replace') { this.editCounter++; this._touchWork(w); }
+    emit('change', { fields: new Set(['structure', 'title', 'body', 'tags', 'sideNote', 'globalNote']), source, ids: new Set() });
+  },
+  /** テンプレートを丸ごと置き換える（同期） */
+  async replaceTemplates(list, { source = 'sync-replace' } = {}) {
+    this.templates = new Map(list.map((t) => { const x = normalizeTemplate(t); return [x.id, x]; }));
+    this._pending.templates = new Set();
+    this._pending.delTemplates = new Set();
+    await db.replaceTemplates(clone([...this.templates.values()]));
+    emit('change', { fields: new Set(['templates']), source, ids: new Set() });
   },
 
   async saveSettings() { await db.setMeta('settings', clone(this.settings)); emit('settings', this.settings); },
   saveUI() { db.setMeta('ui', clone(this.ui)); },
 };
+
+export { normalizeWork };
 
 export function purgedRecord(n, t = now()) {
   return { id: n.id, parentId: null, order: 0, title: '', body: '', sideNote: '', tags: [], collapsed: false, deleted: true, purged: true, updatedAt: t };
@@ -556,14 +802,16 @@ function seedSample(s) {
   const search = id();
   mk(search, root, 3, '検索', '上部の検索アイコン（またはCtrl+F / ⌘+F）で検索できます。\n\n・語を空白で区切るとAND検索：イタケー 求婚者\n・-語 で除外：神 -ポセイドン\n・"語 句" で空白を含む語句そのまま\n・tag:タグ名 でタグ絞り込み\n・in:title / in:body / in:note で検索範囲を限定\n\n検索結果からノードへジャンプでき、一致箇所の一括置換もできます。', ['使い方']);
 
+  const works = id();
+  mk(works, root, 4, '作品', '上部の作品名（いまは「使い方とサンプル」）を押すと、作品の一覧が開きます。\n\n・作品ごとにノード・タグ・共通メモが分かれます\n・テンプレートと設定は全作品で共通です\n・「新しい作品」で別の作品を作り、一覧から切り替えます\n・一覧の「…」から名前の変更・複製・ファイルへの保存・削除\n・保存したファイルは「ファイルから読み込む」で取り込めます', ['使い方']);
   const tpl = id();
-  mk(tpl, root, 4, 'テンプレート', 'メニューの「テンプレート管理」で定型文を登録できます。\n本文に {{変数名}} と書いておくと、呼び出し時に入力欄が出ます。\nためしにキャラクターシートのテンプレートを呼び出してみてください（ツールバーのテンプレートアイコン）。', ['使い方']);
+  mk(tpl, root, 5, 'テンプレート', 'メニューの「テンプレート管理」で定型文を登録できます（全作品で共通）。\n本文に {{変数名}} と書いておくと、呼び出し時に入力欄が出ます。\nためしにキャラクターシートのテンプレートを呼び出してみてください（ツールバーのテンプレートアイコン）。\n\nテンプレート管理では、1件ずつ「書き出す」でファイルにでき、「ファイルから読み込む」で追加できます。', ['使い方']);
 
   const view = id();
-  mk(view, root, 5, '閲覧モード（ビューモード）', '上部の本のアイコンから、読み物としての見た目で表示できます。設定から縦書き・ページめくり表示にも切り替えられます。\nこのノードの本文は、編集画面では記法のまま、閲覧モードでは変換後の見た目になります。両方を見比べてみてください（書き方の一覧はメニューの「使い方」にもあります）。\n長い文章での見え方は、下の「（サンプル）オデュッセイア」の「本文」で試せます。\n\n## ルビ\n｜漂泊の英雄《オデュッセウス》は、故郷《イタケー》を目指した。\n（漢字の直後なら、親文字の前の縦線は省略できます）\n\n## 傍点\nそれは《《決して》》口にしてはならない、太陽神の牛だった。\n\n## 区切り線と場面転換\n（次の行は区切り線）\n---\n（次の行は場面転換）\n* * *\n\n## 文字の装飾\n**太字**、*斜体*（縦書きでは傍線）、~~取り消し線~~、`コード`、[リンク](https://example.com)\n縦書きでは「20年ぶりの帰郷」の数字や「!?」が縦中横になります。\n\n## 箇条書き・引用\n- 箇条書き\n  - 字下げで入れ子\n1. 番号付き\n> 「わが名は“誰でもない”という」', ['使い方']);
+  mk(view, root, 6, '閲覧モード（ビューモード）', '上部の本のアイコンから、読み物としての見た目で表示できます。設定から縦書き・ページめくり表示にも切り替えられます。\nこのノードの本文は、編集画面では記法のまま、閲覧モードでは変換後の見た目になります。両方を見比べてみてください（書き方の一覧はメニューの「使い方」にもあります）。\n長い文章での見え方は、下の「（サンプル）オデュッセイア」の「本文」で試せます。\n\n## ルビ\n｜漂泊の英雄《オデュッセウス》は、故郷《イタケー》を目指した。\n（漢字の直後なら、親文字の前の縦線は省略できます）\n\n## 傍点\nそれは《《決して》》口にしてはならない、太陽神の牛だった。\n\n## 区切り線と場面転換\n（次の行は区切り線）\n---\n（次の行は場面転換）\n* * *\n\n## 文字の装飾\n**太字**、*斜体*（縦書きでは傍線）、~~取り消し線~~、`コード`、[リンク](https://example.com)\n縦書きでは「20年ぶりの帰郷」の数字や「!?」が縦中横になります。\n\n## 箇条書き・引用\n- 箇条書き\n  - 字下げで入れ子\n1. 番号付き\n> 「わが名は“誰でもない”という」', ['使い方']);
 
   const sync = id();
-  mk(sync, root, 6, 'データの保存・同期', 'このデータはこの端末（ブラウザ）の中に自動で保存されます。\n\n右上のボタンからGoogleにログインすると、複数の端末でデータを同期できます（あらかじめ config.js の設定が必要です。README を参照）。\n\nメニューの「バックアップを保存」で、データ全体をJSONファイルとして書き出せます。定期的な保存をおすすめします。', ['使い方']);
+  mk(sync, root, 7, 'データの保存・同期', 'このデータはこの端末（ブラウザ）の中に自動で保存されます。\n\n右上のボタンからGoogleにログインすると、複数の端末でデータを同期できます（あらかじめ config.js の設定が必要です。DEPLOY.md を参照）。同期したデータは、マイドライブの「Netaterry」フォルダに作品ごとのファイルとして保存されます。\n\nメニューの「バックアップを保存」で、すべての作品をJSONファイルとして書き出せます。定期的な保存をおすすめします。', ['使い方']);
 
   const sample = id();
   const world = id();
@@ -607,5 +855,4 @@ function seedSample(s) {
   s._pending.global = true;
   [...s.nodes.keys()].forEach((nid) => s._pending.nodes.add(nid));
   [...s.templates.keys()].forEach((tid) => s._pending.templates.add(tid));
-  s.meta.dirty = false;
 }

@@ -9,6 +9,8 @@ import { renderEditor, refreshEditor, focusTitle, renderSearchNav, currentEditor
 import { openSearch, closeSearch, isSearchOpen, rerunSearch } from './ui/searchpanel.js';
 import { openViewer, isViewerOpen, refreshViewer } from './ui/viewer.js';
 import { applyTheme, toggleMenu, openSyncDialog, doLogin } from './ui/panels.js';
+import { openWorks, renderWorkTitle } from './ui/works.js';
+import { closeViewer } from './ui/viewer.js';
 
 const main = () => $('#main');
 
@@ -36,6 +38,8 @@ ctx.select = (id, { open = false, focusTitle: ft = false } = {}) => {
   if (open && isMobile()) ctx.showScreen('editor');
   if (ft) focusTitle(); // iOS でキーボードを出すため同期的にフォーカス
 };
+
+ctx.login = () => doLogin();
 
 ctx.focusEditorTitle = () => { if (isMobile()) ctx.showScreen('editor'); focusTitle(); };
 
@@ -77,6 +81,7 @@ async function init() {
 
   await store.init();
   applyTheme();
+  renderWorkTitle();
 
   // 永続ストレージを要求（ブラウザによる自動削除の防止）
   try { if (navigator.storage?.persist) navigator.storage.persist(); } catch { /* noop */ }
@@ -120,6 +125,20 @@ async function init() {
     if (info.source !== 'local') { rerunSearch(); refreshViewer(); renderSideNote(); }
   });
   store.on('settings', () => applyTheme());
+  store.on('works', renderWorkTitle);
+  // 作品を切り替えたら画面を作り直す
+  store.on('work', () => {
+    renderWorkTitle();
+    if (isViewerOpen()) closeViewer();
+    renderFilterBar();
+    renderTree();
+    renderEditor();
+    renderSideNote();
+    rerunSearch();
+    updateUndo();
+    scrollSelectedIntoView();
+    if (isMobile()) ctx.showScreen('tree');
+  });
   store.on('error', (e) => toast(e.message, { ms: 6000 }));
 
   // ヘッダー
@@ -132,10 +151,12 @@ async function init() {
   $('#btn-search').addEventListener('click', () => (isSearchOpen() && !isMobile() ? closeSearch() : openSearch()));
   $('#btn-view').addEventListener('click', openViewer);
   $('#btn-menu').addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  $('#btn-work').addEventListener('click', openWorks);
   document.addEventListener('click', (e) => { if (!e.target.closest('#menu') && !e.target.closest('#btn-menu')) $('#menu').hidden = true; });
   $('#btn-sync').addEventListener('click', () => {
     if (!auth.configured) return openSyncDialog();
     if (sync.status === 'needLogin' || sync.status === 'local') return doLogin();
+    if (sync.status === 'syncing') return;
     if (sync.status === 'error' || sync.status === 'offline' || sync.status === 'pending' || sync.status === 'synced') return sync.run();
   });
 
@@ -152,12 +173,14 @@ async function init() {
 
   // 同期
   sync.onStatus(renderSync);
+  sync.onNotice((msg) => toast(msg, { ms: 7000 }));
   sync.init();
   renderSync(sync.status, sync.message);
 
   window.addEventListener('pagehide', () => store.flush());
   registerSW();
   if (store.importedLegacy) toast(`旧版（ノベルメモ）のデータ ${store.importedLegacy} 件を引き継ぎました`, { ms: 6000 });
+  else if (store.migratedWork) toast('作品ごとに分けて保存する形式になりました。今までのデータは作品「最初の作品」に入っています（上部の作品名から名前を変えられます）', { ms: 9000 });
   if (isMobile() && !store.ui.selectedId) ctx.showScreen('tree');
 }
 
