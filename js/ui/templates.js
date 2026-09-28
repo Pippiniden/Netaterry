@@ -2,6 +2,29 @@
 import { store } from '../store.js';
 import { addTagsTo, cleanTag } from '../tags.js';
 import { h, modal, confirmDialog, toast, radioGroup, radioValue } from './dom.js';
+import { downloadText, pickFile, stamp } from '../util.js';
+import { parseDataFile } from '../merge.js';
+import { importTemplatesParsed } from './io.js';
+
+const safeName = (s) => (s || '無題').replace(/[\\/:*?"<>|\r\n]+/g, '_').slice(0, 60);
+
+/** テンプレートをファイルに書き出す（1件ずつ、またはまとめて） */
+export function exportTemplateFile(list) {
+  const data = store.exportTemplates(list);
+  const name = list.length === 1 ? `${safeName(list[0].name)}.template.json` : `netaterry-templates-${stamp()}.json`;
+  downloadText(name, JSON.stringify(data, null, 1), 'application/json');
+  toast(list.length === 1 ? `テンプレート「${list[0].name}」を書き出しました` : `テンプレートを${list.length}件書き出しました`);
+}
+
+/** ファイルからテンプレートを読み込む（テンプレートファイル・バックアップ・作品ファイルのどれでも、中のテンプレートを取り出す） */
+export async function importTemplateFile() {
+  const f = await pickFile('.json,application/json');
+  if (!f) return 0;
+  let parsed;
+  try { parsed = parseDataFile(JSON.parse(f.text)); }
+  catch (e) { toast('読み込めません：' + e.message, { ms: 5000 }); return 0; }
+  return importTemplatesParsed(parsed.templates, f.name);
+}
 
 /** テンプレート本文中の {{変数名}} を出現順・重複なしで取得 */
 export function placeholders(body) {
@@ -86,6 +109,7 @@ export async function openTemplateManager() {
       h('div', { class: 'main' }, h('div', { class: 't' }, t.name || '無題'),
         h('div', { class: 'sub' }, `${placeholders(t.body).length ? '変数 ' + placeholders(t.body).map((v) => `{{${v}}}`).join(' ') + '　' : ''}${t.tags.length ? 'タグ：' + t.tags.join('、') : ''}`)),
       h('button', { type: 'button', class: 'btn small', onclick: async () => { await editTemplate(t.id); draw(); } }, '編集'),
+      h('button', { type: 'button', class: 'btn small', title: 'このテンプレートをファイルに書き出す', onclick: () => exportTemplateFile([t]) }, '書き出す'),
       h('button', { type: 'button', class: 'btn small', onclick: async () => {
         if (!(await confirmDialog(`テンプレート「${t.name}」を削除しますか？`, { ok: '削除', danger: true }))) return;
         store.batch('テンプレート削除', (tx) => tx.updateTemplate(t.id, { deleted: true }));
@@ -97,7 +121,12 @@ export async function openTemplateManager() {
   await modal({
     title: 'テンプレート管理', wide: true,
     body: [h('div', { class: 'row-inline', style: { marginBottom: '8px' } }, filter,
-      h('button', { type: 'button', class: 'btn primary', onclick: async () => { await editTemplate(null); draw(); } }, '新規作成')), box],
+      h('button', { type: 'button', class: 'btn primary', onclick: async () => { await editTemplate(null); draw(); } }, '新規作成')),
+    h('div', { class: 'row-inline', style: { marginBottom: '8px' } },
+      h('button', { type: 'button', class: 'btn small', onclick: async () => { await importTemplateFile(); draw(); } }, 'ファイルから読み込む'),
+      h('button', { type: 'button', class: 'btn small', onclick: () => { const l = store.liveTemplates(); if (l.length) exportTemplateFile(l); else toast('テンプレートがありません'); } }, 'すべて書き出す'),
+      h('span', { class: 'muted', style: { fontSize: '12px' } }, 'テンプレートは全作品で共通です')),
+    box],
   });
 }
 

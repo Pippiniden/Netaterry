@@ -42,7 +42,7 @@ function build() {
   built = true;
   const o = store.ui.searchOpts;
   const pane = $('#pane-search');
-  const input = h('input', { class: 'sp-input', type: 'search', placeholder: '検索（例: 王都 騎士 -団長 tag:キャラ）', 'aria-label': '検索語', enterkeyhint: 'search', autocomplete: 'off' });
+  const input = h('input', { class: 'sp-input', type: 'search', placeholder: '検索（例: イタケー 求婚者 -ポセイドン tag:キャラ）', 'aria-label': '検索語', enterkeyhint: 'search', autocomplete: 'off' });
   const hist = h('div', { class: 'suggest sp-history', hidden: true });
   const save = () => { store.saveUI(); run(); };
   const sortSel = h('select', { 'aria-label': '並び順', onchange: (e) => { o.sort = e.target.value; save(); } },

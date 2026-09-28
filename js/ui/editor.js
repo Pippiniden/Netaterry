@@ -7,6 +7,7 @@ import { ctx } from './ctx.js';
 import { nodeOpButtons, removeSelected } from './tree.js';
 import { applyTemplateTo } from './templates.js';
 import { sanitizeTitle, escapeHtml } from '../util.js';
+import { auth } from '../drive.js';
 
 let els = null;       // 現在のエディタ要素
 let curId = null;
@@ -23,9 +24,17 @@ export function renderEditor() {
     curId = null;
     els = null;
     p.innerHTML = '';
-    p.append(h('div', { class: 'ed-empty' },
-      h('p', {}, 'ノードを選択してください'),
-      h('p', { class: 'muted' }, store.children(null).length ? '左のツリーから選ぶと、ここで編集できます。' : '「＋」でノードを追加できます。')));
+    const w = store.work;
+    if (w && w.needsDownload && !store.nodes.size) {
+      p.append(h('div', { class: 'ed-empty' },
+        h('p', {}, `作品「${w.name}」はGoogleドライブにあります`),
+        h('p', { class: 'muted' }, auth.hasToken ? 'ドライブから読み込んでいます…' : 'Googleでログインすると、この端末に読み込みます。'),
+        auth.hasToken ? null : h('button', { type: 'button', class: 'btn primary', onclick: () => ctx.login && ctx.login() }, 'Googleでログイン')));
+    } else {
+      p.append(h('div', { class: 'ed-empty' },
+        h('p', {}, 'ノードを選択してください'),
+        h('p', { class: 'muted' }, store.children(null).length ? '左のツリーから選ぶと、ここで編集できます。' : '「＋」でノードを追加できます。')));
+    }
     renderSideNote();
     return;
   }

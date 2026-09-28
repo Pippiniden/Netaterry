@@ -5,10 +5,11 @@ import { clone, formatDate, downloadText, pickFile, stamp } from '../util.js';
 import { h, $, icon, modal, confirmDialog, promptDialog, toast, checkbox, radioGroup, radioValue } from './dom.js';
 import { ctx } from './ctx.js';
 import { openTemplateManager } from './templates.js';
-import { openExport, downloadBackup, restoreBackup, importMarkdown } from './io.js';
+import { openExport, downloadBackup, importDataFile, importMarkdown } from './io.js';
 import { sync } from '../sync.js';
 import { auth } from '../drive.js';
 import { toggleSideNote } from './editor.js';
+import { openWorks } from './works.js';
 
 // ---------- テーマ ----------
 export function applyTheme() {
@@ -62,15 +63,16 @@ export function toggleMenu(force) {
   const item = (ic, label, fn) => h('button', { type: 'button', role: 'menuitem', onclick: () => { menu.hidden = true; fn(); } }, h('span', { html: icon(ic, 18) }), label);
   const loggedIn = auth.hasToken;
   menu.append(
-    item('note', '共通メモ', () => toggleSideNote(true, 'global')),
+    item('book', '作品の一覧・切り替え', openWorks),
+    item('note', '共通メモ（この作品）', () => toggleSideNote(true, 'global')),
     item('template', 'テンプレート管理', openTemplateManager),
     item('tag', 'タグ管理', openTagManager),
     item('trash', 'ゴミ箱', openTrash),
     h('hr'),
     item('download', 'エクスポート', openExport),
     item('list', 'Markdownを読み込む', importMarkdown),
-    item('download', 'バックアップを保存（JSON）', downloadBackup),
-    item('list', 'バックアップから読み込む', restoreBackup),
+    item('download', 'バックアップを保存（すべての作品）', downloadBackup),
+    item('list', 'ファイルから読み込む（バックアップ・作品）', importDataFile),
     h('hr'),
     item('cloud', loggedIn ? 'Googleドライブ同期（ログイン中）' : 'Googleでログイン', openSyncDialog),
     item('settings', '設定', openSettings),
@@ -86,19 +88,29 @@ export async function openSyncDialog() {
   if (!auth.configured) {
     body.append(
       h('p', {}, 'Googleドライブ同期はまだ設定されていません。'),
-      h('p', { class: 'muted' }, 'config.js に Google Cloud の OAuth クライアントIDを設定すると、複数端末でデータを同期できます（手順は README を参照）。未設定でも、この端末内ですべての機能を使えます。'));
+      h('p', { class: 'muted' }, 'config.js に Google Cloud の OAuth クライアントIDを設定すると、複数端末でデータを同期できます（手順は DEPLOY.md を参照）。未設定でも、この端末内ですべての機能を使えます。'));
     await modal({ title: 'Googleドライブ同期', body });
     return;
   }
   const status = { local: 'この端末のみ（未ログイン）', synced: '同期済み', syncing: '同期中…', pending: '未同期の変更あり', needLogin: '再ログインが必要', error: 'エラー', offline: 'オフライン' }[sync.status];
+  const legacy = store.meta.legacyDrive;
   body.append(
     h('p', {}, `状態：${status}${sync.message ? '（' + sync.message + '）' : ''}`),
     sync.lastSyncAt ? h('p', { class: 'muted' }, `最終同期：${formatDate(sync.lastSyncAt)}`) : null,
-    h('p', { class: 'muted' }, 'データはGoogleドライブのアプリ専用領域（ドライブの画面には表示されない場所）に保存されます。ログインの有効期限は約1時間で、切れた場合は「再ログイン」を押すと未同期の変更がそのまま同期されます。'),
+    h('p', { class: 'muted' }, 'マイドライブの「Netaterry」フォルダに、作品ごとのファイル（作品名.json）と「テンプレート.json」を保存します。ドライブの画面から見たり、ダウンロードしたりできます。このアプリが読み書きできるのは、自分で作ったこれらのファイルだけです。'),
+    h('p', { class: 'muted' }, 'ドライブ上でファイル名を変えたり別のフォルダへ動かしたりしても同期は続きます（ファイル名は作品名に合わせて戻ります）。ドライブでファイルを削除すると、その作品は各端末からも外れます。ログインの有効期限は約1時間で、切れた場合は「再ログイン」を押すと未同期の変更がそのまま同期されます。'),
+    h('details', { class: 'muted', style: { fontSize: '13px' } },
+      h('summary', {}, 'v1.3 以前に同期していたデータ'),
+      h('p', {}, '以前の版は、ドライブのアプリ専用領域（ドライブの画面に出ない場所）に1つのファイルで保存していました。以前同期していた端末では、次のログイン時に自動で「最初の作品」へ取り込みます。' +
+        (legacy?.doneAt ? `（この端末では${legacy.found ? '取り込み済み' : '確認済み・データなし'}）` : '')),
+      h('button', { type: 'button', class: 'btn small', onclick: async () => {
+        try { await sync.login({ legacy: true }); toast('以前の保存先を確認しました'); }
+        catch (e) { toast('ログインできませんでした：' + e.message, { ms: 6000 }); }
+      } }, '以前の保存先から取り込む')),
   );
   const buttons = auth.hasToken
     ? [{ label: 'ログアウト', value: 'logout' }, { label: '今すぐ同期', value: 'sync', primary: true }]
-    : [{ label: '閉じる', value: null }, { label: store.meta.driveFileId ? '再ログイン' : 'Googleでログイン', value: 'login', primary: true }];
+    : [{ label: '閉じる', value: null }, { label: store.meta.everSynced ? '再ログイン' : 'Googleでログイン', value: 'login', primary: true }];
   const act = await modal({ title: 'Googleドライブ同期', body, buttons });
   if (act === 'login') await doLogin();
   else if (act === 'sync') sync.run();
@@ -308,6 +320,8 @@ export function openHelp() {
     body: h('div', { html: `
 <h3>基本</h3>
 <p>左のツリーでノードを選び、右側でタイトル・タグ・本文を書きます。スマホではノードをタップすると編集画面が開きます。変更は自動で保存されます。</p>
+<h3>作品</h3>
+<p>上部の作品名を押すと、作品の一覧が開きます。作品ごとにノード・タグ・共通メモが分かれ、テンプレートと設定は全作品で共通です。一覧の「…」から名前の変更・複製・ファイルへの保存・削除ができ、「ファイルから読み込む」で保存した作品を新しい作品として取り込めます。</p>
 <h3>ノード操作</h3>
 <p>＋ 下に兄弟ノード／↳ 子ノード／↑↓ 並べ替え／⇤⇥ 階層の上げ下げ／複製／削除（ゴミ箱へ）。PCではドラッグ＆ドロップでも移動できます。</p>
 <p>PCのツリー操作キー：↑↓ 選択、←→ 開閉、Tab / Shift+Tab 階層、Alt+↑↓ 移動、Ctrl+Enter 兄弟追加、Enter 編集、Delete 削除。</p>
@@ -316,13 +330,13 @@ export function openHelp() {
 <h3>検索</h3>
 <p><code>語1 語2</code>（すべて含む）、<code>-語</code>（含まない）、<code>"語 句"</code>、<code>tag:タグ</code>、<code>in:title</code> / <code>in:body</code> / <code>in:note</code>。検索結果から一括置換もできます。</p>
 <h3>サイドメモ</h3>
-<p>本文とは別の作業用メモです。「このノード」タブは開いているノードだけのメモ、「共通」タブはどのノードからでも同じ内容が見られるメモです（メニューの「共通メモ」からも開けます）。どちらも閲覧モードには表示されません。</p>
+<p>本文とは別の作業用メモです。「このノード」タブは開いているノードだけのメモ、「共通」タブはその作品のどのノードからでも同じ内容が見られるメモです（メニューの「共通メモ」からも開けます）。どちらも閲覧モードには表示されません。</p>
 <h3>テンプレート</h3>
-<p>本文に <code>{{名前}}</code> のような変数を書いておくと、呼び出し時に入力欄が出ます。</p>
+<p>本文に <code>{{名前}}</code> のような変数を書いておくと、呼び出し時に入力欄が出ます。テンプレートは全作品で共通です。テンプレート管理から1件ずつ（またはまとめて）ファイルに書き出し、別の端末や人と受け渡しできます。</p>
 <h3>閲覧モード</h3>
 <p>本の形で読み返せます。縦書き・ページめくりに対応。ページめくりでは画面の左右タップ・スワイプ・矢印キーでめくり、中央タップでメニューを表示します。</p>
 <p>本文の記法：<code>｜親文字《ルビ》</code>（漢字の直後なら <code>漢字《ルビ》</code>）、<code>《《傍点》》</code>、<code>---</code> 区切り線、<code>* * *</code> や <code>◇◇◇</code> 場面転換、<code>**太字**</code>、<code>*斜体*</code>、<code>~~取り消し~~</code>、<code>&#96;コード&#96;</code>、<code>[文字](URL)</code>、<code># 見出し</code>、<code>- 箇条書き</code>、<code>1. 番号</code>、<code>&gt; 引用</code>。記号をそのまま出したいときは前に <code>\</code> を付けます。編集画面では記法のまま表示されます。</p>
 <h3>データの保護</h3>
-<p>データはこの端末（ブラウザ）内に保存されます。iPhone/iPad では「ホーム画面に追加」して使うと、データが自動削除されにくくなります。定期的にメニューの「バックアップを保存」もおすすめします。</p>` }),
+<p>データはこの端末（ブラウザ）内に保存されます。Googleでログインすると、マイドライブの「Netaterry」フォルダに作品ごとのファイルで同期します。iPhone/iPad では「ホーム画面に追加」して使うと、データが自動削除されにくくなります。定期的にメニューの「バックアップを保存」（すべての作品を1ファイルに保存）もおすすめします。</p>` }),
   });
 }

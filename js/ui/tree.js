@@ -66,7 +66,7 @@ export function renderTree() {
       }
     };
     walk(null, 1);
-    if (!store.children(null).length) frag.append(h('div', { class: 'tree-empty' }, 'ノードがありません。下の「＋」から追加してください。'));
+    if (!store.children(null).length) frag.append(h('div', { class: 'tree-empty' }, store.work?.needsDownload ? 'Googleドライブから読み込むと、ここに表示されます。' : 'ノードがありません。下の「＋」から追加してください。'));
   } else if (f.display === 'flat') {
     for (const n of store.treeOrder()) if (matched.has(n.id)) frag.append(row(n, 1, { flat: true }));
     if (!matched.size) frag.append(h('div', { class: 'tree-empty' }, '該当するノードがありません。'));
