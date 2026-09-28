@@ -45,7 +45,17 @@ small { font-size: 12px; }
   border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
-#app-title { font-size: 16px; font-weight: 600; margin: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#app-title { font-size: 16px; font-weight: 600; margin: 0 6px; white-space: nowrap; overflow: hidden; min-width: 0; flex: 0 1 auto; }
+.work-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 36px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.work-btn:hover, .work-btn:focus-visible { border-color: var(--line); background: var(--panel); }
+.work-btn .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.work-btn .caret { font-size: 11px; opacity: .6; flex: none; }
+.work-item { gap: 6px; }
+.work-item .work-open { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 4px 2px; cursor: pointer; border-radius: 6px; }
+.work-item .work-open:hover { background: var(--panel); }
+.work-item.current .t { font-weight: 600; }
+.work-item .t .chip { margin-left: 8px; vertical-align: 1px; }
+.ed-empty .btn { margin-top: 10px; }
 .spacer { flex: 1; }
 .icon-btn {
   width: 38px; height: 38px; border: 0; background: none; border-radius: 8px;
