@@ -322,6 +322,17 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
   .modal-foot { padding-bottom: calc(10px + var(--safe-b)); }
 }
 
+/* 同期の競合ダイアログ */
+.cf-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.cf-col { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+.cf-head { display: flex; align-items: center; gap: 6px; }
+.cf-badge { font-size: 11px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: #fff; }
+.cf-time, .cf-sub { font-size: 12px; }
+.cf-title { font-weight: 600; margin-top: 6px; overflow-wrap: anywhere; }
+.cf-body { margin: 6px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; }
+.cf-note { font-size: 12px; margin: 8px 0 0; }
+@media (max-width: 799px) { .cf-cols { grid-template-columns: 1fr; } .cf-body { max-height: 120px; } }
+
 .list { display: flex; flex-direction: column; }
 .list-item { display: flex; gap: 8px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--line); }
 .list-item .main { flex: 1; min-width: 0; }

@@ -1,6 +1,6 @@
 // Service Worker: アプリ本体をキャッシュしてオフラインでも起動できるようにする
 // アプリを更新したら VERSION を上げること（新バージョン検出→「更新があります」表示）
-const VERSION = 'v2.1.0';
+const VERSION = 'v2.2.0';
 const CACHE = `netaterry-${VERSION}`;
 const ASSETS = [
   './',
@@ -36,6 +36,7 @@ const ASSETS = [
   './js/ui/panels.js',
   './js/ui/viewer.js',
   './js/ui/works.js',
+  './js/ui/conflict.js',
 ];
 
 self.addEventListener('install', (e) => {

@@ -163,6 +163,83 @@ export function cleanupTombstones(data, retentionDays, t = Date.now()) {
   return { data: out, removed };
 }
 
+// ---------- 同期の競合 ----------
+// 「前回の同期以降、両方の端末が同じノード（テンプレート・共通メモ）を変更した」ものを競合として扱う。
+// 前回の同期時点の状態は base（各項目の updatedAt の一覧）として端末に覚えておく。
+
+/** 同期が済んだ時点のデータから base を作る */
+export function makeBase(data) {
+  const items = {};
+  for (const k of ['nodes', 'templates']) for (const x of data[k] || []) items[x.id] = x.updatedAt;
+  return { items, global: data.globalNote ? normalizeGlobalNote(data.globalNote).updatedAt : 0 };
+}
+
+const CONTENT_FIELDS = ['title', 'body', 'sideNote', 'name', 'tags', 'parentId', 'order', 'deleted', 'purged'];
+const sameContent = (x, y) => CONTENT_FIELDS.every((f) => JSON.stringify(x[f] ?? null) === JSON.stringify(y[f] ?? null));
+
+/**
+ * ローカルとドライブの両方が base 以降に変更した項目を探す（内容が同じものは除く）
+ * @returns [{ key, kind: 'node'|'template'|'global', id, local, remote }]
+ */
+export function findConflicts(local, remote, base) {
+  if (!base || !base.items) return [];
+  const out = [];
+  for (const [k, kind] of [['nodes', 'node'], ['templates', 'template']]) {
+    const rmap = new Map((remote[k] || []).map((x) => [x.id, x]));
+    for (const l of local[k] || []) {
+      const r = rmap.get(l.id);
+      const b = base.items[l.id];
+      if (!r || b === undefined) continue;
+      if (l.updatedAt === b || r.updatedAt === b || l.updatedAt === r.updatedAt) continue;
+      if (sameContent(l, r)) continue;
+      out.push({ key: `${kind}:${l.id}:${l.updatedAt}:${r.updatedAt}`, kind, id: l.id, local: l, remote: r });
+    }
+  }
+  if (local.globalNote && remote.globalNote) {
+    const l = normalizeGlobalNote(local.globalNote), r = normalizeGlobalNote(remote.globalNote);
+    if (l.updatedAt !== base.global && r.updatedAt !== base.global && l.updatedAt !== r.updatedAt && l.text !== r.text) {
+      out.push({ key: `global:${l.updatedAt}:${r.updatedAt}`, kind: 'global', id: 'global', local: l, remote: r });
+    }
+  }
+  return out;
+}
+
+/** 「両方残す」ができる競合か（どちらも削除されていないもの） */
+export const canKeepBoth = (c) => c.kind === 'global' || (!c.local.deleted && !c.remote.deleted);
+
+/**
+ * 競合の解決結果をマージ済みデータへ反映する
+ * @param resolved [{ conflict, choice: 'local'|'remote'|'both' }]
+ */
+export function applyResolutions(merged, resolved, newId, t = Date.now()) {
+  const out = { ...merged };
+  for (const k of ['nodes', 'templates']) if (Array.isArray(out[k])) out[k] = [...out[k]];
+  const put = (list, item) => {
+    const i = list.findIndex((x) => x.id === item.id);
+    if (i >= 0) list[i] = item; else list.push(item);
+  };
+  for (const { conflict: c, choice } of resolved) {
+    const at = Math.max(t, c.local.updatedAt, c.remote.updatedAt) + 1; // 他の端末にもこの選択が勝つように
+    const win = choice === 'remote' ? c.remote : c.local;
+    if (c.kind === 'global') {
+      out.globalNote = {
+        text: choice === 'both' ? `${c.local.text}\n\n――（ドライブ側の共通メモ）――\n${c.remote.text}` : win.text,
+        updatedAt: at,
+      };
+      continue;
+    }
+    const list = c.kind === 'node' ? out.nodes : out.templates;
+    put(list, { ...win, updatedAt: at });
+    if (choice === 'both') {
+      const copy = { ...c.remote, id: newId(), updatedAt: at };
+      if (c.kind === 'node') copy.title = `${c.remote.title}（ドライブ側の版）`;
+      else copy.name = `${c.remote.name}（ドライブ側の版）`;
+      list.push(copy);
+    }
+  }
+  return out;
+}
+
 /** 2つのデータが同一内容か（同期の要否判定用） */
 export function sameData(a, b) {
   const ids = (list) => [...(list || [])].sort((x, y) => (x.id < y.id ? -1 : 1)).map((n) => [n.id, n.updatedAt, n.deleted]);

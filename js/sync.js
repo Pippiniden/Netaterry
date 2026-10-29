@@ -7,13 +7,17 @@
 //   4. テンプレート、今開いている作品、未同期の変更がある作品を、それぞれ同期する
 import { store, LEGACY_WORK_ID, makeWork } from './store.js';
 import { auth, drive, fileNameFor, AuthError, NotFoundError } from './drive.js';
-import { mergeData, mergeTemplateData, cleanupTombstones, migrate, migrateTemplates, KIND } from './merge.js';
-import { clone } from './util.js';
+import { mergeData, mergeTemplateData, cleanupTombstones, migrate, migrateTemplates, makeBase, findConflicts, applyResolutions, canKeepBoth, KIND } from './merge.js';
+import { clone, uuid } from './util.js';
 
 let running = null;
 let again = false;
+let conflictHandler = null;
 const listeners = [];
 const noticeListeners = [];
+
+/** 競合の解決を途中でやめた（利用者が「あとで」を選んだ）。未同期のまま残し、次の同期でまた聞く */
+class ConflictPaused extends Error {}
 
 export const sync = {
   status: 'local',   // local | synced | syncing | pending | needLogin | error | offline
@@ -24,6 +28,14 @@ export const sync = {
   /** 同期中に起きた、利用者に知らせたいこと（作品がドライブで削除された など） */
   onNotice(fn) { noticeListeners.push(fn); },
   _notice(msg) { noticeListeners.forEach((fn) => fn(msg)); },
+  /**
+   * 競合の選択を利用者に尋ねる関数を登録する
+   * fn(conflict, { index, total, name, canBoth }) → Promise<{ choice: 'local'|'remote'|'both', all: boolean } | null>（null は中止）
+   * 登録がなければ、従来どおり更新日時の新しい方を採る
+   */
+  onConflict(fn) { conflictHandler = fn; },
+  _conflictAll: null, // 「今回はそれ以上聞かない」で選ばれた選択（1回の同期の間だけ有効）
+  _decided: new Map(), // 同じ競合を同期のやり直しで聞き直さないための記録
   _set(status, message = '') {
     this.status = status;
     this.message = message;
@@ -92,7 +104,8 @@ export const sync = {
           this._set(store.isDirty() ? 'pending' : 'synced');
         } catch (e) {
           console.warn('sync error', e);
-          if (e instanceof AuthError) this._set('needLogin', '未同期（再ログインが必要）');
+          if (e instanceof ConflictPaused) this._set('pending', '競合の解決待ち（同期を中断しました）');
+          else if (e instanceof AuthError) this._set('needLogin', '未同期（再ログインが必要）');
           else if (!navigator.onLine) this._set('offline', 'オフライン（未同期）');
           else this._set('error', e.message);
           again = false;
@@ -103,6 +116,8 @@ export const sync = {
   },
 
   async _syncOnce() {
+    this._conflictAll = null;
+    this._decided.clear();
     await store.flush();
     // 1. 一覧
     const [workFiles, tplFiles] = await Promise.all([drive.list('work'), drive.list('templates')]);
@@ -157,6 +172,7 @@ export const sync = {
         // 同じ作品が別のファイルになっている（初回・統合後）→ 次の同期でマージさせる
         w.sync.fileId = f.id;
         w.sync.remoteMT = null;
+        w.sync.base = null;
         w.sync.dirty = true;
         await store.saveWork(wid);
       }
@@ -178,6 +194,7 @@ export const sync = {
         // この端末に未同期の変更がある → 消さずに新しいファイルとして作り直す
         w.sync.fileId = null;
         w.sync.remoteMT = null;
+        w.sync.base = null;
         await store.saveWork(w.id);
       } else {
         await store.forgetWork(w.id);
@@ -224,7 +241,7 @@ export const sync = {
     const retention = store.settings.retentionDays;
     const st = ds.state();
     if (!st) return;
-    if (remoteFile && st.fileId !== remoteFile.id) { st.fileId = remoteFile.id; st.remoteMT = null; }
+    if (remoteFile && st.fileId !== remoteFile.id) { st.fileId = remoteFile.id; st.remoteMT = null; st.base = null; }
     if (!st.fileId) {
       // ドライブにない → 新しく作る
       const counter = store.editCounter;
@@ -234,6 +251,7 @@ export const sync = {
       const res = await drive.create(data, { name: ds.fileName(), folderId, appProperties: ds.appProperties });
       st.fileId = res.id;
       st.remoteMT = res.modifiedTime;
+      st.base = makeBase(data);
       if (store.editCounter === counter) st.dirty = false;
       await ds.saveState();
       return;
@@ -247,6 +265,7 @@ export const sync = {
         // 保存先ファイルが消えていた → 作り直す
         st.fileId = null;
         st.remoteMT = null;
+        st.base = null;
         st.dirty = true;
         await ds.saveState();
         return this._syncDataset(ds, null, true);
@@ -264,11 +283,16 @@ export const sync = {
           const { data } = cleanupTombstones(remote, retention);
           await ds.replace(data, 'sync-replace');
           st.remoteMT = remoteMT;
+          st.base = makeBase(data);
           await ds.saveState();
           await this._rename(ds, st, remoteFile?.name);
           return;
         }
-        base = ds.merge(await ds.exportData(), remote);
+        // 前回の同期以降、こちらもドライブ側も変更した項目は、どちらを残すか選んでもらう
+        const local = await ds.exportData();
+        base = ds.merge(local, remote);
+        const conflicts = findConflicts(local, remote, st.base);
+        if (conflicts.length) base = applyResolutions(base, await this._resolveConflicts(conflicts, ds), uuid);
       } else {
         base = await ds.exportData();
       }
@@ -288,11 +312,32 @@ export const sync = {
         again = true; // dirty はそのまま（次回アップロード）
       }
       st.remoteMT = res.modifiedTime;
+      st.base = makeBase(data);
       await ds.saveState();
       await this._rename(ds, st, res.name);
       return;
     }
     throw new Error('他の端末と同時に更新が続いたため同期を中断しました。しばらくしてから再度お試しください。');
+  },
+
+  /** 競合ごとに「この端末／ドライブ／両方」を決める（利用者に尋ねる。尋ねられない場合は更新日時の新しい方） */
+  async _resolveConflicts(conflicts, ds) {
+    const resolved = [];
+    const newer = (c) => (c.remote.updatedAt > c.local.updatedAt ? 'remote' : 'local');
+    for (const [i, c] of conflicts.entries()) {
+      let choice = this._decided.get(c.key);
+      if (!choice && this._conflictAll) choice = this._conflictAll === 'both' && !canKeepBoth(c) ? newer(c) : this._conflictAll;
+      if (!choice && conflictHandler) {
+        const ans = await conflictHandler(c, { index: i + 1, total: conflicts.length, name: ds.label?.() || '', canBoth: canKeepBoth(c) });
+        if (!ans) throw new ConflictPaused('競合の解決を中断しました');
+        choice = ans.choice;
+        if (ans.all) this._conflictAll = ans.choice;
+      }
+      if (!choice) choice = newer(c);
+      this._decided.set(c.key, choice);
+      resolved.push({ conflict: c, choice });
+    }
+    return resolved;
   },
 
   /** ドライブ上のファイル名を作品名に合わせる */
@@ -325,6 +370,7 @@ function workDataset(workId) {
     merge: (a, b) => stripTemplates(mergeData(a, b)),
     migrate: (raw) => stripTemplates(migrate(raw)),
     fileName: () => fileNameFor(w().name),
+    label: () => `作品「${w().name}」`,
     appProperties: { netaterry: 'work', workId },
     renamable: true,
   };
@@ -341,6 +387,7 @@ function templatesDataset() {
     merge: (a, b) => mergeTemplateData(a, b),
     migrate: (raw) => migrateTemplates(raw),
     fileName: () => 'テンプレート.json',
+    label: () => 'テンプレート',
     appProperties: { netaterry: 'templates' },
     renamable: false,
     kind: KIND.templates,

@@ -10,6 +10,7 @@ import { openSearch, closeSearch, isSearchOpen, rerunSearch } from './ui/searchp
 import { openViewer, isViewerOpen, refreshViewer } from './ui/viewer.js';
 import { applyTheme, toggleMenu, openSyncDialog, doLogin } from './ui/panels.js';
 import { openWorks, renderWorkTitle } from './ui/works.js';
+import { askConflict } from './ui/conflict.js';
 import { closeViewer } from './ui/viewer.js';
 
 const main = () => $('#main');
@@ -174,6 +175,7 @@ async function init() {
   // 同期
   sync.onStatus(renderSync);
   sync.onNotice((msg) => toast(msg, { ms: 7000 }));
+  sync.onConflict(askConflict);
   sync.init();
   renderSync(sync.status, sync.message);
 

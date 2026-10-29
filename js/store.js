@@ -36,7 +36,8 @@ export const DEFAULT_UI = {
 
 /** 作品に分かれる前のデータを移した作品の id。複数の端末で移しても同じ作品になるよう固定値にする */
 export const LEGACY_WORK_ID = 'first-work';
-const emptySync = () => ({ fileId: null, remoteMT: null, dirty: false });
+// base: 前回の同期時点の各項目の更新日時（merge.js の makeBase）。両端末の変更が衝突したかの判定に使う
+const emptySync = () => ({ fileId: null, remoteMT: null, dirty: false, base: null });
 
 /** 作品レコードを作る */
 export function makeWork({ id = uuid(), name = '新しい作品', globalNote = null, dirty = true, seed = false, needsDownload = false } = {}) {
