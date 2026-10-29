@@ -202,6 +202,18 @@ small { font-size: 12px; }
   padding-bottom: calc(var(--m-bottom) + var(--safe-b));
 }
 
+.ed-stat {
+  flex: none; padding: 4px var(--m-right) calc(4px + var(--safe-b)) var(--m-left); border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 26px;
+}
+
+/* ---------- 縦書きPDF出力 ---------- */
+.pdf-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.pdf-row > span:first-child { min-width: 7.5em; }
+.pdf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); column-gap: 16px; }
+.pdf-info { font-size: 13px; line-height: 1.7; background: var(--selected); border-radius: 8px; padding: 8px 12px; }
+.pdf-help { margin-top: 10px; font-size: 12px; }
+
 /* ---------- サイドメモ ---------- */
 #sidenote-panel {
   position: fixed; z-index: 40; right: 0; top: calc(var(--bar-h) + env(safe-area-inset-top, 0px)); bottom: 0; width: min(380px, 100%);

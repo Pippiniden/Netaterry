@@ -6,7 +6,8 @@ import { h, $, icon, iconBtn, modal, isMobile, toast } from './dom.js';
 import { ctx } from './ctx.js';
 import { nodeOpButtons, removeSelected } from './tree.js';
 import { applyTemplateTo } from './templates.js';
-import { sanitizeTitle, escapeHtml } from '../util.js';
+import { sanitizeTitle, escapeHtml, debounce } from '../util.js';
+import { countChars, genkou } from '../count.js';
 import { auth } from '../drive.js';
 
 let els = null;       // 現在のエディタ要素
@@ -57,6 +58,7 @@ export function renderEditor() {
     store.batch('本文編集', (tx) => tx.update(id, { body: body.value }), { coalesce: 'body:' + id });
   });
   body.addEventListener('keydown', (e) => autoIndent(e, body));
+  ['select', 'keyup', 'mouseup', 'touchend'].forEach((ev) => body.addEventListener(ev, scheduleStat));
 
   const tagbox = createTagBox(id);
   const tagToggle = h('button', { type: 'button', class: 'tagbox-toggle mobile-only', onclick: () => { store.ui.tagsOpen = !store.ui.tagsOpen; store.saveUI(); updateTagToggle(); } });
@@ -73,8 +75,9 @@ export function renderEditor() {
   const path = h('div', { class: 'ed-path' });
   const nav = h('div', { class: 'searchnav', hidden: true });
   const head = h('div', { class: 'ed-head' }, path, title, tagWrap);
-  p.append(head, toolbar, nav, body);
-  els = { title, body, tagbox, tagToggle, noteBtn, path, nav };
+  const stat = h('div', { class: 'ed-stat', 'aria-live': 'off' });
+  p.append(head, toolbar, nav, body, stat);
+  els = { title, body, tagbox, tagToggle, noteBtn, path, nav, stat };
   refreshEditor();
   renderSideNote();
   renderSearchNav();
@@ -104,8 +107,36 @@ export function refreshEditor() {
   els.tagbox.render();
   els.noteBtn.classList.toggle('has', !!n.sideNote.trim());
   updateTagToggle();
+  scheduleStat();
   if (sideNoteOpen) renderSideNote();
 }
+
+// ---------- 文字数・原稿用紙換算 ----------
+const fmt = (n) => n.toLocaleString('ja-JP');
+const sheetText = (g) => `${(Math.round(g.pages * 10) / 10).toFixed(1)}枚`;
+
+/** このノード以下（子孫まで）の本文の文字数 */
+function subtreeChars(id) {
+  let n = 0;
+  for (const c of store.children(id)) n += countChars(c.body).all + subtreeChars(c.id);
+  return n;
+}
+
+function updateStat() {
+  if (!els) return;
+  const n = store.get(curId);
+  if (!n || n.deleted) { els.stat.textContent = ''; return; }
+  const { selectionStart: s, selectionEnd: e } = els.body;
+  const sel = s !== e ? els.body.value.slice(s, e) : '';
+  const c = countChars(n.body);
+  const g = genkou(n.body);
+  const parts = [`${fmt(c.all)}字`, `原稿用紙 ${sheetText(g)}（400字詰め）`];
+  if (c.nospace !== c.all) parts.push(`空白を除く ${fmt(c.nospace)}字`);
+  if (store.children(n.id).length) parts.push(`配下を含む ${fmt(countChars(n.body).all + subtreeChars(n.id))}字`);
+  if (sel) parts.unshift(`選択 ${fmt(countChars(sel).all)}字`);
+  els.stat.textContent = parts.join('　／　');
+}
+const scheduleStat = debounce(updateStat, 120);
 
 export function focusTitle() {
   if (!els) return;

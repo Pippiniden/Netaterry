@@ -6,6 +6,7 @@ import { h, $, icon, modal, confirmDialog, promptDialog, toast, checkbox, radioG
 import { ctx } from './ctx.js';
 import { openTemplateManager } from './templates.js';
 import { openExport, downloadBackup, importDataFile, importMarkdown } from './io.js';
+import { openPdfExport } from './pdfexport.js';
 import { sync } from '../sync.js';
 import { auth } from '../drive.js';
 import { toggleSideNote } from './editor.js';
@@ -70,6 +71,7 @@ export function toggleMenu(force) {
     item('trash', 'ゴミ箱', openTrash),
     h('hr'),
     item('download', 'エクスポート', openExport),
+    item('book', '縦書きPDF出力（同人誌入稿用）', openPdfExport),
     item('list', 'Markdownを読み込む', importMarkdown),
     item('download', 'バックアップを保存（すべての作品）', downloadBackup),
     item('list', 'ファイルから読み込む（バックアップ・作品）', importDataFile),

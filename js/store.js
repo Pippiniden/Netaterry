@@ -5,8 +5,10 @@
 import { db } from './db.js';
 import { migrate, normalizeNode, normalizeTemplate, normalizeGlobalNote, normalizeWork, reassignNodeIds, KIND } from './merge.js';
 import { uuid, now, clone, orderBetween, SCHEMA_VERSION } from './util.js';
+import { DEFAULT_PDF } from './pdf.js';
 
 export const DEFAULT_SETTINGS = {
+  pdf: DEFAULT_PDF,          // 縦書きPDF（同人誌入稿用）の組版設定
   autoIndent: true,
   kanaFold: false,           // タグ・検索のひらがな/カタカナ同一視
   retentionDays: 30,         // ゴミ箱の保持期間

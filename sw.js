@@ -1,6 +1,6 @@
 // Service Worker: アプリ本体をキャッシュしてオフラインでも起動できるようにする
 // アプリを更新したら VERSION を上げること（新バージョン検出→「更新があります」表示）
-const VERSION = 'v2.0.0';
+const VERSION = 'v2.1.0';
 const CACHE = `netaterry-${VERSION}`;
 const ASSETS = [
   './',
@@ -21,6 +21,8 @@ const ASSETS = [
   './js/search.js',
   './js/markdown.js',
   './js/richtext.js',
+  './js/count.js',
+  './js/pdf.js',
   './js/drive.js',
   './js/sync.js',
   './js/ui/ctx.js',
@@ -30,6 +32,7 @@ const ASSETS = [
   './js/ui/templates.js',
   './js/ui/searchpanel.js',
   './js/ui/io.js',
+  './js/ui/pdfexport.js',
   './js/ui/panels.js',
   './js/ui/viewer.js',
   './js/ui/works.js',
